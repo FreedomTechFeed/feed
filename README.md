@@ -36,12 +36,29 @@ Replace `<arch>` with your router's architecture (e.g., `aarch64_cortex-a53`, `m
 ## Feed Index Generation
 
 The feed indices (Packages.gz, APKINDEX.tar.gz) are generated from built
-`.ipk`/`.apk` artifacts by two scripts:
+`.ipk`/`.apk` artifacts:
 
 ```sh
-scripts/generate-packages-index.sh <artifact-dir>   # opkg Packages.gz
-scripts/generate-apk-index.sh <artifact-dir>         # apk APKINDEX.tar.gz
+scripts/generate-packages-index.sh <artifact-dir>   # opkg Packages.gz (one arch)
+scripts/generate-apk-index.sh <artifact-dir>         # apk APKINDEX.tar.gz (one arch)
+scripts/index-feed.sh <artifact-dir> <output-dir>    # both, all arches (used by CI)
 ```
+
+`index-feed.sh` detects each artifact's architecture from its embedded metadata,
+groups by arch, and runs the matching generator(s) — so the feed scales to every
+architecture without a hard-coded list.
+
+### Continuous Integration
+
+`.github/workflows/build-feed.yml` runs automatically on every release
+(tag push / release published). It downloads the release's `.ipk`/`.apk` assets,
+generates per-arch indices via `index-feed.sh`, and publishes them to:
+
+1. The GitHub Release itself (a structure-preserving `feed-<tag>.tar.gz` plus
+   flat per-arch files like `aarch64_cortex-a53-Packages.gz`).
+2. The `gh-pages` branch, served at
+   `https://freedomtechfeed.github.io/feed/<arch>/Packages.gz` once GitHub Pages
+   is enabled in repository settings (one-time manual step).
 
 These scripts are tested and currently in production use for TollGate releases
 at `releases.tollgate.me`.

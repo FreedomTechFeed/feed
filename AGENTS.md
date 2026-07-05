@@ -14,12 +14,13 @@ feed/
 ├── README.md                  # User-facing feed documentation
 ├── FEED-MANIFEST.conf         # Package list (name | source | status)
 ├── scripts/
-│   ├── generate-packages-index.sh  # opkg Packages.gz generator
-│   └── generate-apk-index.sh       # apk APKINDEX.tar.gz generator
+│   ├── generate-packages-index.sh  # opkg Packages.gz generator (per arch)
+│   ├── generate-apk-index.sh       # apk APKINDEX.tar.gz generator (per arch)
+│   └── index-feed.sh               # orchestrator: group by arch, run both
 ├── docs/
 │   └── feed-strategy.md       # Architecture decision: hybrid custom repo
 └── .github/workflows/
-    └── build-feed.yml         # CI pipeline (placeholder)
+    └── build-feed.yml         # CI: auto-generate indices on every release
 ```
 
 ## Key Decisions
@@ -42,7 +43,17 @@ scripts/generate-packages-index.sh /path/to/artifacts/
 
 # Generate apk index from a directory of .apk files
 scripts/generate-apk-index.sh /path/to/artifacts/
+
+# Orchestrate both, for a mixed directory of .ipk/.apk across architectures:
+# detects each file's arch from its embedded metadata, groups by arch, and runs
+# the matching generator(s) per arch, emitting <out>/<arch>/{Packages.gz,APKINDEX.tar.gz}.
+scripts/index-feed.sh /path/to/artifacts/ /path/to/feed-output/
 ```
+
+CI (`.github/workflows/build-feed.yml`) calls `index-feed.sh` automatically on
+every release: it downloads the release's `.ipk`/`.apk` assets, indexes every
+architecture present, and publishes the feed tree to the GitHub Release and to
+the `gh-pages` branch.
 
 ## Contributing
 
