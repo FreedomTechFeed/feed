@@ -1,23 +1,159 @@
 name: Build Feed
 
+# ---------------------------------------------------------------------------
+# Auto-generate opkg (Packages.gz) + apk (APKINDEX.tar.gz) package indices for
+# EVERY architecture present in a release, then publish them.
+#
+# Design (see docs/feed-strategy.md + AGENTS.md):
+#   This repo is an INDEXER, not a builder. It does not compile packages. The
+#   .ipk/.apk artifacts are expected to already exist as assets on the GitHub
+#   Release that triggers this run — attached by a release manager or by each
+#   package source repo's own CI (e.g. OpenTollGate/tollgate-module-basic-go).
+#
+#   This workflow downloads those assets, hands them to scripts/index-feed.sh
+#   (which groups them by architecture — read from each artifact's embedded
+#   control/.PKGINFO metadata — and runs the production index generators
+#   scripts/generate-packages-index.sh and scripts/generate-apk-index.sh once
+#   per architecture), then publishes the resulting feed tree two ways:
+#
+#     1. As assets on the GitHub Release (structure-preserving tarball + flat
+#        per-arch index names, e.g. aarch64_cortex-a53-Packages.gz).
+#     2. To a gh-pages branch, served at <user>.github.io/feed/<arch>/ once
+#        GitHub Pages is enabled in repo settings (one-time manual step). This
+#        is the stable URL the README documents; map releases.tollgate.me →
+#        this Pages site (CNAME / proxy) as a separate infra task.
+#
+# Triggers:
+#   - push of a v* tag
+#   - release published
+#   - workflow_dispatch (manual; optional artifact_release input to re-index an
+#     older release)
+# ---------------------------------------------------------------------------
+
 on:
   push:
     tags:
       - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      artifact_release:
+        description: 'Release tag whose assets to index (defaults to the triggering tag)'
+        required: false
+
+permissions:
+  contents: write   # attach indices to the release + push gh-pages branch
+
+concurrency:
+  group: build-feed-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  build-indices:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - arch: aarch64_cortex-a53
-            target: armsr/armv8
-          - arch: mipsel_24kc
-            target: ramips/mt7621
-          - arch: x86_64
-            target: x86/64
+    outputs:
+      tag: ${{ steps.rel.outputs.tag }}
+      indexed: ${{ steps.gen.outputs.indexed }}
     steps:
-      - name: Placeholder
-        run: echo "TODO - implement feed build pipeline for ${{ matrix.arch }}"
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: rel
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.artifact_release }}
+        run: |
+          if   [ -n "$INPUT_TAG" ];   then tag="$INPUT_TAG"
+          elif [ -n "$RELEASE_TAG" ]; then tag="$RELEASE_TAG"
+          else tag="${GITHUB_REF##*/}"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Indexing release: $tag"
+
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          mkdir -p artifacts
+          # gh release download fetches every asset attached to the release.
+          if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --clobber; then
+            echo "Downloaded $(find artifacts -mindepth 1 -maxdepth 1 -type f | wc -l) asset(s)"
+          else
+            echo "::warning::release '$TAG' has no assets or does not exist yet; nothing to index"
+          fi
+          ls -la artifacts || true
+
+      - name: Generate indices (opkg + apk, all arches)
+        id: gen
+        run: |
+          mkdir -p feed
+          sh scripts/index-feed.sh "$PWD/artifacts" "$PWD/feed"
+          # Count how many index files were produced.
+          n=$(find feed -type f \( -name 'Packages.gz' -o -name 'APKINDEX.tar.gz' \) | wc -l | tr -d ' ')
+          echo "indexed=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Upload feed tree artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-${{ steps.rel.outputs.tag }}
+          path: feed/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # --- Publish target 1: attach indices to the GitHub Release -------------
+      - name: Attach indices to the release
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -e
+          [ -d feed ] && [ -n "$(find feed -type f)" ] || { echo "no indices generated; skipping release upload"; exit 0; }
+          # GitHub release asset names cannot contain '/'. Ship a structure-
+          # preserving tarball plus flattened per-arch index names.
+          tar -czf "feed-${TAG}.tar.gz" -C feed .
+          gh release upload "$TAG" "feed-${TAG}.tar.gz" --repo "$GITHUB_REPOSITORY" --clobber
+          find feed -type f \( -name 'Packages.gz' -o -name 'APKINDEX.tar.gz' \) | while IFS= read -r f; do
+            arch=$(basename "$(dirname "$f")")
+            flat="${arch}-$(basename "$f")"
+            cp "$f" "$flat"
+            gh release upload "$TAG" "$flat" --repo "$GITHUB_REPOSITORY" --clobber
+            rm -f "$flat"
+          done
+          echo "Attached indices to release $TAG"
+
+  # --- Publish target 2: deploy the feed tree to a gh-pages branch ------------
+  # Gives the stable URL documented in README.md once Pages is enabled:
+  #   https://<account>.github.io/feed/<arch>/Packages.gz
+  # Enabling GitHub Pages (Settings → Pages → Source: gh-pages branch) is a
+  # one-time manual repo-settings step; this job just keeps the branch fresh.
+  publish-pages:
+    needs: build-indices
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Download feed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: feed-${{ needs.build-indices.outputs.tag }}
+          path: feed
+      - name: Deploy feed tree to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: feed
+          publish_branch: gh-pages
+          keep_files: false
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'feed indices for ${{ needs.build-indices.outputs.tag }}'
+
+  # TODO (follow-up, needs human decision):
+  #   - Index signing: sign Packages.gz (opkg) / APKINDEX.tar.gz (apk) and ship
+  #     a public key. Requires a key kept as a repository secret.
+  #   - Cross-repo artifact pull: optionally fetch .ipk/.apk from each source
+  #     repo's matching release per FEED-MANIFEST.conf instead of relying on a
+  #     release manager to attach them here.
+  #   - releases.tollgate.me mapping: CNAME/proxy the Pages site, or add an
+  #     rsync/webdav deploy step targeting the blossom host.
