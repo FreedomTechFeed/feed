@@ -1,0 +1,23 @@
+name: Build Feed
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64_cortex-a53
+            target: armsr/armv8
+          - arch: mipsel_24kc
+            target: ramips/mt7621
+          - arch: x86_64
+            target: x86/64
+    steps:
+      - name: Placeholder
+        run: echo "TODO - implement feed build pipeline for ${{ matrix.arch }}"
