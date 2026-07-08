@@ -10,6 +10,11 @@ on:
 env:
   PKG_DIR: net/tollgate-wrt
   UPSTREAM: OpenTollGate/tollgate-module-basic-go
+  IMAGE_OWNER: freedomtechfeed
+
+permissions:
+  contents: read
+  packages: read   # pull pre-baked SDK images from ghcr.io
 
 jobs:
   validate:
@@ -157,10 +162,12 @@ jobs:
           # src-link so the SDK builds straight from this checkout.
           echo "src-link tollgate $GITHUB_WORKSPACE" >> feeds.conf
           ./scripts/feeds update -a
-          # install -a (not just tollgate-wrt) so golang/host (the Go
-          # toolchain) plus nodogsplash and jq from the packages feed are all
-          # available to satisfy PKG_BUILD_DEPENDS / DEPENDS.
-          ./scripts/feeds install -a
+          # Targeted install (not -a): -a pulls every feed package and exposes
+          # current openwrt-master recursive-dependency breakage (luci,
+          # strongswan, ...). golang1.26 is required because the `golang`
+          # package is a dummy whose HOST_BUILD_DEPENDS is golang1.26/host
+          # (the real toolchain). Bump 1.26 if GO_DEFAULT_VERSION changes.
+          ./scripts/feeds install tollgate-wrt golang golang1.26 nodogsplash jq
 
       - name: Configure
         shell: bash

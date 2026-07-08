@@ -1,0 +1,47 @@
+name: Build SDK image (Go toolchain pre-baked)
+
+# Builds and publishes the pre-baked OpenWrt SDK images (Go toolchain already
+# staged) that validate-feed.yml's build-sdk job consumes for fast (~5 min)
+# from-source package rebuilds. CI infrastructure only.
+#
+# After any change here, dispatch this once to (re)seed the images before
+# build-sdk can use them. Weekly runs keep the toolchain fresh against
+# openwrt master.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"   # weekly, Monday 03:00 UTC
+
+# GHCR namespace must be lowercase; the repo owner (FreedomTechFeed) isn't.
+# Hard-coded to avoid an invalid-reference build/pull error.
+env:
+  IMAGE_OWNER: freedomtechfeed
+
+permissions:
+  contents: read
+  packages: write   # push to ghcr.io
+
+jobs:
+  build:
+    name: Build tg-sdk (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86-64, mediatek-filogic, ramips-mt7621]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg TARGET=${{ matrix.target }} \
+            -t ghcr.io/${IMAGE_OWNER}/tg-sdk-${{ matrix.target }}:master \
+            -f docker/Dockerfile.sdk .
+
+      - name: Push image
+        run: docker push ghcr.io/${IMAGE_OWNER}/tg-sdk-${{ matrix.target }}:master

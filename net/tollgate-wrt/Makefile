@@ -81,6 +81,20 @@ define Package/tollgate-wrt/conffiles
 /etc/config/firewall-tollgate
 endef
 
+# Deterministic extraction + layout diagnostic. Upstream's go.mod lives in a
+# tarball subdirectory (src/), and golang-package.mk expects go.mod at
+# $(PKG_BUILD_DIR)/go.mod. Extract to $(BUILD_DIR) so $(PKG_BUILD_DIR) (the
+# src/ subdir) is reliably populated, and print the layout so CI logs show
+# whether the go.mod-not-found issue is extraction or deeper in golang-build.sh.
+define Build/Prepare
+	mkdir -p $(BUILD_DIR)
+	$(TAR) -C $(BUILD_DIR) $(TAR_OPTIONS) $(DL_DIR)/$(PKG_SOURCE)
+	$(Build/Patch)
+	@echo "=== PKG_BUILD_DIR = $(PKG_BUILD_DIR) ==="
+	@ls -la $(PKG_BUILD_DIR)
+	@test -f $(PKG_BUILD_DIR)/go.mod && echo "go.mod: OK" || { echo "go.mod: MISSING"; exit 1; }
+endef
+
 # Build both binaries: the service via the framework helper, then the CLI from
 # its separate module directory. The manual go build inherits GOOS/GOARCH/
 # GOARM/GOMIPS/CGO_ENABLED/GOCACHE from golang-package.mk's exported env, so
