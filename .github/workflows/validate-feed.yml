@@ -148,6 +148,22 @@ jobs:
         shell: bash
         run: cd /builder && { [ -d ./scripts ] || ./setup.sh; }
 
+      - name: Restore SDK build cache
+        # Cache the built Go toolchain (golang/host) + build state so re-runs
+        # skip the ~40 min Go bootstrap. run_id makes the key unique (always
+        # re-saves); restore-keys prefix finds the previous run's cache for
+        # this target. Note: 10 GB/repo cap — 3 arches may occasionally evict
+        # (self-healing: one cold run, then re-cached).
+        uses: actions/cache@v4
+        with:
+          path: |
+            /builder/staging_dir
+            /builder/build_dir
+            /builder/dl
+          key: sdkbuild-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            sdkbuild-${{ matrix.target }}-
+
       - name: Add this feed alongside the standard feeds
         shell: bash
         run: |
