@@ -184,13 +184,17 @@ jobs:
         shell: bash
         run: |
           cd /builder
-          # Generate base config, then disable "build everything" flags so
-          # only tollgate-wrt's real dep chain builds (not the whole kmod
-          # catalog), then re-run defconfig to apply. The all-kmods default was
-          # making the job compile kmod-iio-* etc. and time out.
+          # The SDK ships a bloated config (CONFIG_ALL/ALL_KMODS) that makes
+          # builds compile every kmod and time out. Re-seed minimal: keep only
+          # the target selection + our packages, build-all flags off. (Don't use
+          # scripts/config -- in this image it's a directory, not the helper.)
           make defconfig
-          ./scripts/config -d ALL -d ALL_KMODS -d ALL_NONSHARED
-          ./scripts/config -e PACKAGE_tollgate-wrt -e PACKAGE_nodogsplash -e PACKAGE_jq
+          {
+            grep -E '^CONFIG_TARGET' .config 2>/dev/null
+            printf '# CONFIG_ALL is not set\n# CONFIG_ALL_KMODS is not set\n# CONFIG_ALL_NONSHARED is not set\n'
+            printf 'CONFIG_PACKAGE_tollgate-wrt=y\nCONFIG_PACKAGE_nodogsplash=y\nCONFIG_PACKAGE_jq=y\n'
+          } > .config.min
+          mv .config.min .config
           make defconfig
           echo "enabled packages (=y): $(grep -c '=y' .config)"
 
