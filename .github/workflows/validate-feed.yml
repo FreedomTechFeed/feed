@@ -141,16 +141,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Extract the OpenWrt SDK
+        # Snapshot SDK images (>=24.10) ship an empty /builder plus a
+        # setup.sh; release images are pre-extracted. Run setup only when the
+        # SDK isn't already present. See openwrt/docker README.
+        shell: bash
+        run: cd /builder && { [ -d ./scripts ] || ./setup.sh; }
+
       - name: Add this feed alongside the standard feeds
         shell: bash
         run: |
           set -e
-          cp /builder/feeds.conf.default /builder/feeds.conf
-          # src-link so the SDK builds straight from this checkout.
-          echo "src-link tollgate $GITHUB_WORKSPACE" >> /builder/feeds.conf
           cd /builder
+          cp feeds.conf.default feeds.conf
+          # src-link so the SDK builds straight from this checkout.
+          echo "src-link tollgate $GITHUB_WORKSPACE" >> feeds.conf
           ./scripts/feeds update -a
-          ./scripts/feeds install tollgate-wrt
+          # install -a (not just tollgate-wrt) so golang/host (the Go
+          # toolchain) plus nodogsplash and jq from the packages feed are all
+          # available to satisfy PKG_BUILD_DEPENDS / DEPENDS.
+          ./scripts/feeds install -a
 
       - name: Configure
         shell: bash

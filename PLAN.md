@@ -121,6 +121,13 @@ Cost: each `build-sdk` job is slow (~30–60 min, it bootstraps the Go toolchain
 The 3-target matrix runs on main pushes / PRs / tags, so expect ~3× that in CI
 minutes on those events (the jobs run in parallel).
 
+SDK image contract (gotcha): since OpenWrt 24.10 the snapshot SDK images
+(`-master`/`-SNAPSHOT`) ship an **empty `/builder` plus a `setup.sh`** — the
+job must run `./setup.sh` (download + extract the SDK) before feeds/make work.
+The job also runs `feeds install -a` (not just `tollgate-wrt`) so the
+`golang/host` toolchain and `nodogsplash`/`jq` from the `packages` feed are
+available.
+
 ## Checklist
 
 - [x] Write `PLAN.md` (this document)
