@@ -1,74 +1,103 @@
-# Freedom Tech Feed
+# TollGate OpenWrt Feed
 
-A custom OpenWrt package feed for freedom-tech software.
+An OpenWrt package feed that builds **`tollgate-wrt`** from the upstream
+[`OpenTollGate/tollgate-module-basic-go`](https://github.com/OpenTollGate/tollgate-module-basic-go)
+source using OpenWrt's `golang-package.mk`.
 
-## Packages
+TollGate turns an OpenWrt router into a Cashu-powered payment gateway for
+internet access. This feed produces a single package that installs both
+binaries — the `tollgate-wrt` service and the `tollgate` CLI — plus its init
+scripts, UCI defaults, captive-portal site, and hotplug hooks.
 
-| Package | Description | Source |
-|---------|-------------|--------|
-| `tollgate-wrt` | Cashu-powered payment gateway for internet access | [OpenTollGate/tollgate-module-basic-go](https://github.com/OpenTollGate/tollgate-module-basic-go) |
-| `fips` | Freedom Infrastructure Protocol Stack — mesh networking | [OpenTollGate/fips](https://github.com/OpenTollGate/fips) |
-| `tollgate-rs` | TollGate Rust implementation | [OpenTollGate/tollgate-rs](https://github.com/OpenTollGate/tollgate-rs) |
-| `mptcp-bonding` | Multi-WAN MPTCP bonding client for TollGate routers | [c03rad0r/tg-mptcp-server](https://github.com/c03rad0r/tg-mptcp-server) |
+The upstream repository is **not modified** by this feed. It is downloaded,
+built, and packaged entirely from the release source tarball.
 
-## Using the Feed
+## Why a separate feed repo
 
-### OpenWrt 24.x (opkg)
+An earlier attempt ([upstream PR #125](https://github.com/OpenTollGate/tollgate-module-basic-go/pull/125))
+tried to restructure upstream's Go source (`src/` → repo root) to satisfy
+`golang-package.mk`. That touched ~120 files and could not be rebased.
+`golang-package.mk` accepts `GO_PKG` pointing at a subdirectory, so **no
+upstream restructure is needed**. Keeping the feed glue in this separate repo
+means:
 
-```sh
-echo "src/gz freedomtech https://releases.tollgate.me/feed/<arch>/Packages.gz" \
-  >> /etc/opkg/customfeeds.conf
-opkg update
-opkg install tollgate-wrt
-```
+- zero rebase collisions with upstream development, forever;
+- the package is usable as a `src-git` feed *today*;
+- the `net/tollgate-wrt/` directory lifts cleanly into a future PR against
+  [`openwrt/packages`](https://github.com/openwrt/packages) as a small,
+  reviewable addition.
 
-### OpenWrt 25.x (apk)
+## Using the feed
 
-```sh
-echo "https://releases.tollgate.me/feed/<arch>" \
-  > /etc/apk/repositories.d/freedomtech.list
-apk update
-apk add tollgate-wrt
-```
-
-Replace `<arch>` with your router's architecture (e.g., `aarch64_cortex-a53`, `mipsel_24kc`).
-
-## Feed Index Generation
-
-The feed indices (Packages.gz, APKINDEX.tar.gz) are generated from built
-`.ipk`/`.apk` artifacts by two scripts:
+Add it to an OpenWrt build:
 
 ```sh
-scripts/generate-packages-index.sh <artifact-dir>   # opkg Packages.gz
-scripts/generate-apk-index.sh <artifact-dir>         # apk APKINDEX.tar.gz
+echo "src-git tollgate https://github.com/FreedomTechFeed/feed.git" >> feeds.conf
+./scripts/feeds update tollgate
+./scripts/feeds install tollgate-wrt
 ```
 
-These scripts are tested and currently in production use for TollGate releases
-at `releases.tollgate.me`.
+Then enable it in `make menuconfig` under **Network → Captive Portals →
+tollgate-wrt**, and build.
 
-## Adding a Package to the Feed
+> The package depends on `nodogsplash` and `jq`, which come from the standard
+> `packages` feed — keep that feed enabled too. `golang-package.mk` (the Go
+> build helpers) also comes from the `packages` feed.
 
-1. Ensure the package has an OpenWrt Makefile with proper `Package` definition
-2. Build the `.ipk`/`.apk` via OpenWrt SDK or CI
-3. Place the artifact in the architecture directory
-4. Run the index generation scripts
-5. Upload to the feed hosting location
+## How it builds two binaries in one package
 
-## Architecture
+The upstream source has **two Go modules**:
 
-The feed targets all OpenWrt-supported architectures. Primary test targets:
+- the service, the main module at `src/` (`github.com/OpenTollGate/tollgate-module-basic-go`),
+- the CLI, a self-contained module at `src/cmd/tollgate-cli/` (`module tollgate-cli`).
 
-- `aarch64_cortex-a53` (GL-MT6000)
-- `mipsel_24kc` (GL-MT3000)
+`golang-package.mk` builds one module per Makefile. The `Makefile` overrides
+`Build/Compile` to: (1) build the service through the framework helper, then
+(2) build the CLI manually from its own module dir, reusing the framework's
+exported cross-compile environment. One package, both binaries —
+`/usr/bin/tollgate-wrt` and `/usr/bin/tollgate`.
 
-## Related
+## Syncing a new upstream release
 
-- [TollGate Project](https://github.com/OpenTollGate)
-- [TollGate Release Manager](https://releases.tollgate.me)
-- [net4sats](https://net4sats.cash)
-- [OpenWrt SDK Documentation](https://openwrt.org/docs/guide-developer/toolchain/using_the_sdk)
+```sh
+scripts/sync-from-upstream.sh v0.5.1
+```
+
+This downloads the tarball for the given tag, recomputes `PKG_HASH`, sets
+`PKG_VERSION`, and re-vendors `packaging/files/` into `net/tollgate-wrt/files/`.
+Review the diff (the captive-portal-site assets change every release — that's
+expected) and commit.
+
+## Validation
+
+`.github/workflows/validate-feed.yml` runs three jobs:
+
+1. **validate** — Makefile lint (fields present, no `REPLACES`), `PKG_HASH`
+   verified against the live tarball, every referenced `files/` path exists.
+2. **go-smoke** — fast `go build` of both modules for amd64/arm64/mipsle
+   (no SDK, catches source breakage quickly).
+3. **build-sdk** — the authoritative proof: a real OpenWrt SDK compile of the
+   package via `golang-package.mk`, including the nested CLI-module build.
+
+The SDK job is the gate before submitting upstream. See [`PLAN.md`](PLAN.md)
+for the full design and the highest-risk item.
+
+## Submitting to `openwrt/packages` (future)
+
+When this feed is green in CI, the `net/tollgate-wrt/` directory can be lifted
+into a PR against `openwrt/packages`. The only change required is the
+`golang-package.mk` include path:
+
+```diff
+-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
++include ../../lang/golang/golang-package.mk
+```
+
+Follow the
+[`openwrt/packages` contributing guide](https://github.com/openwrt/packages/blob/master/CONTRIBUTING.md)
+(Signed-off-by, commit-message format) when opening that PR.
 
 ## License
 
-The feed infrastructure scripts are MIT licensed. Each package retains its
-own license — see the source repositories.
+`GPL-3.0-only` — matches upstream. The built `tollgate-wrt` package ships
+upstream's `LICENSE`.

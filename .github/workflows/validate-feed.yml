@@ -1,0 +1,186 @@
+name: Validate Feed
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"   # weekly: catch breakage from openwrt master / golang-package.mk churn
+
+env:
+  PKG_DIR: net/tollgate-wrt
+  UPSTREAM: OpenTollGate/tollgate-module-basic-go
+
+jobs:
+  validate:
+    name: Lint Makefile, verify hash & files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Makefile fields
+        run: |
+          set -e
+          M="$PKG_DIR/Makefile"
+          [ -f "$M" ] || { echo "FAIL: $M not found"; exit 1; }
+          for field in PKG_NAME PKG_VERSION PKG_RELEASE PKG_SOURCE_URL PKG_HASH \
+                       PKG_LICENSE GO_PKG GO_PKG_BUILD_PKG; do
+            grep -q "^${field}:" "$M" || { echo "FAIL: missing $field"; exit 1; }
+          done
+          grep -q 'BuildPackage' "$M" || { echo "FAIL: missing BuildPackage eval"; exit 1; }
+
+          # Upstream policy: REPLACES is not allowed in openwrt/packages.
+          grep -q 'REPLACES' "$M" && { echo "FAIL: REPLACES not allowed upstream"; exit 1; }
+
+          echo "Makefile lint passed."
+
+      - name: Verify PKG_HASH against the source tarball
+        run: |
+          set -e
+          M="$PKG_DIR/Makefile"
+          EXPECTED=$(grep '^PKG_HASH:' "$M" | sed 's/^PKG_HASH:=//')
+          PKG_VERSION=$(grep '^PKG_VERSION:' "$M" | sed 's/^PKG_VERSION:=//')
+          [ "$EXPECTED" != "skip" ] || { echo "FAIL: PKG_HASH is 'skip'"; exit 1; }
+
+          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
+          echo "Fetching $URL"
+          ACTUAL=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
+          echo "expected=$EXPECTED"
+          echo "actual  =$ACTUAL"
+          [ "$EXPECTED" = "$ACTUAL" ] || { echo "FAIL: PKG_HASH mismatch"; exit 1; }
+
+      - name: Verify every ./files/ path referenced by the Makefile exists
+        run: |
+          set -e
+          M="$PKG_DIR/Makefile"
+          # Pull out ./files/... tokens, strip a trailing glob '*' or cp '/.' suffix.
+          grep -oP '\./files/\S+' "$M" \
+            | sed -e 's/\*$//' -e 's#/\.$##' \
+            | sort -u \
+            | while IFS= read -r ref; do
+                [ -e "$PKG_DIR/$ref" ] || { echo "FAIL: Makefile references $ref but $PKG_DIR/$ref is missing"; exit 1; }
+              done
+          echo "All referenced files/ paths exist."
+
+      - name: Verify the critical runtime files are vendored
+        run: |
+          set -e
+          for f in \
+            files/etc/init.d/tollgate-wrt \
+            files/etc/config/firewall-tollgate \
+            files/etc/uci-defaults/99-tollgate-setup \
+            files/etc/uci-defaults/90-tollgate-captive-portal-symlink \
+            files/etc/hotplug.d/iface/95-tollgate-restart \
+            files/lib/upgrade/keep.d/tollgate; do
+            [ -f "$PKG_DIR/$f" ] || { echo "FAIL: missing $f"; exit 1; }
+          done
+          echo "Critical files present."
+
+  go-smoke:
+    name: Go cross-compile (no SDK)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: amd64,                      goarm: "",  gomips: "" }
+          - { goarch: arm64,                      goarm: "",  gomips: "" }
+          - { goarch: mipsle,                     goarm: "",  gomips: softfloat }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Download pinned upstream source
+        run: |
+          set -e
+          PKG_VERSION=$(grep '^PKG_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_VERSION:=//')
+          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
+          curl -fsSL "$URL" | tar -xz
+          echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-$PKG_VERSION/src" >> "$GITHUB_ENV"
+
+      - name: Build service + CLI for ${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: |
+          set -e
+          # Service: main module root at src/.
+          (cd "$TOLLGATE_SRC" && go build -o /dev/null .)
+          # CLI: separate module at src/cmd/tollgate-cli/.
+          (cd "$TOLLGATE_SRC/cmd/tollgate-cli" && go build -o /dev/null .)
+
+  build-sdk:
+    name: SDK build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # The authoritative proof that the package compiles inside the OpenWrt
+    # build system via golang-package.mk (incl. the nested CLI module build).
+    # Slow (~30-60 min/job: it bootstraps the Go toolchain). Runs on main
+    # pushes, PRs, tags, weekly, and manual dispatch. The 3-target matrix
+    # proves the real TollGate hardware arches alongside x86-64.
+    if: >-
+      github.event_name == 'pull_request'
+      || github.event_name == 'workflow_dispatch'
+      || github.event_name == 'schedule'
+      || startsWith(github.ref, 'refs/tags/')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86-64,           desc: "host-runnable (amd64)" }
+          - { target: mediatek-filogic, desc: "GL-MT6000 (aarch64_cortex-a53)" }
+          - { target: ramips-mt7621,    desc: "GL-MT3000 (mipsel_24kc)" }
+    container:
+      image: openwrt/sdk:${{ matrix.target }}-master
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add this feed alongside the standard feeds
+        shell: bash
+        run: |
+          set -e
+          cp /builder/feeds.conf.default /builder/feeds.conf
+          # src-link so the SDK builds straight from this checkout.
+          echo "src-link tollgate $GITHUB_WORKSPACE" >> /builder/feeds.conf
+          cd /builder
+          ./scripts/feeds update -a
+          ./scripts/feeds install tollgate-wrt
+
+      - name: Configure
+        shell: bash
+        run: |
+          cd /builder
+          printf 'CONFIG_PACKAGE_tollgate-wrt=y\nCONFIG_PACKAGE_nodogsplash=y\nCONFIG_PACKAGE_jq=y\n' >> .config
+          make defconfig
+
+      - name: Build tollgate-wrt
+        shell: bash
+        run: |
+          cd /builder
+          make -j"$(nproc)" package/tollgate-wrt/compile V=s
+
+      - name: Collect & show produced package(s)
+        shell: bash
+        run: |
+          set -e
+          cd /builder
+          echo "=== produced package(s) ==="
+          find bin -type f \( -name 'tollgate-wrt*.ipk' -o -name 'tollgate-wrt*.apk' \) -print -exec ls -lh {} \;
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          find bin -type f \( -name 'tollgate-wrt*.ipk' -o -name 'tollgate-wrt*.apk' \) \
+            -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
+          echo "=== staged for upload ==="
+          ls -lh "$GITHUB_WORKSPACE/artifacts/"
+
+      - name: Upload package artifact(s)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tollgate-wrt-${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
