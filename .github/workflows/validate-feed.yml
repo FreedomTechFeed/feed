@@ -10,11 +10,6 @@ on:
 env:
   PKG_DIR: net/tollgate-wrt
   UPSTREAM: OpenTollGate/tollgate-module-basic-go
-  IMAGE_OWNER: freedomtechfeed
-
-permissions:
-  contents: read
-  packages: read   # pull pre-baked SDK images from ghcr.io
 
 jobs:
   validate:
