@@ -101,14 +101,18 @@ define Build/Prepare
 endef
 
 # Build both binaries: the service via the framework helper, then the CLI from
-# its separate module directory. The manual go build inherits GOOS/GOARCH/
-# GOARM/GOMIPS/CGO_ENABLED/GOCACHE from golang-package.mk's exported env, so
-# cross-compilation stays consistent with the service binary. The -X ldflags
-# are harmless no-ops for the CLI module (it does not contain those symbols).
+# its separate module directory. The framework helper handles the service; the
+# CLI lives in a sibling go module so we build it manually. Make runs each
+# recipe line in a SEPARATE shell, so the cross-compile environment set up by
+# GoPackage/Build/Compile does NOT carry over. We must re-establish it via
+# $(GO_PKG_VARS), which adds `go` to PATH and exports GOOS/GOARCH/GOARM/GOMIPS/
+# CGO_ENABLED/CC/GOCACHE/GOMODCACHE — exactly what the framework uses. The -X
+# ldflags are harmless no-ops for the CLI module (it does not contain those
+# symbols).
 define Build/Compile
 	$(call GoPackage/Build/Compile)
 	cd $(PKG_BUILD_DIR)/cmd/tollgate-cli && \
-		$(GO) build -trimpath \
+		$(GO_PKG_VARS) go build -trimpath \
 			-ldflags "$(GO_PKG_LDFLAGS_X:%=-X %)" \
 			-o $(GO_PKG_BUILD_BIN_DIR)/tollgate-cli .
 endef
