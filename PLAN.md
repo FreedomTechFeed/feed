@@ -145,3 +145,44 @@ available.
 - [ ] _(future)_ First green `build-sdk` run across all 3 arches
 - [ ] _(future)_ Lift `net/tollgate-wrt/` into a PR to `openwrt/packages`
       (swap the `golang-package.mk` include path)
+
+## Phase 4: Expand feed (fips, tollgate-rs, mptcp-bonding)
+
+Added three more independent packages alongside `tollgate-wrt`:
+
+| Package | Dir | Build system | Source |
+|---|---|---|---|
+| `fips` | `net/fips/` | `rust-package.mk` | jmcorgan/fips (pinned commit 30c5808) |
+| `tollgate-rs` | `net/tollgate-rs/` | `rust-package.mk` | OpenTollGate/tollgate-rs (pinned commit be5400f) |
+| `mptcp-bonding` | `net/mptcp-bonding/` | pure files | c03rad0r/tg-mptcp-server |
+
+Each package has its own `net/<name>/` directory — no bundling.
+
+### rust-package.mk include path
+
+Same pattern as golang-package.mk:
+
+- **Standalone feed:** `include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk`
+- **In openwrt/packages:** `include ../../lang/rust/rust-package.mk`
+
+### CI extensions
+
+- `validate` job: generalized to lint ALL `net/*/Makefile` files (not just
+  tollgate-wrt). Checks common fields + language-specific fields + referenced
+  `files/` paths.
+- Added `rust-smoke` job: cross-compiles fips and tollgate-rs for
+  `x86_64-unknown-linux-musl` outside the SDK. Non-blocking initially
+  (`continue-on-error`) since C-dep crates may need SDK cross-headers.
+- `build-sdk` job: still only tollgate-wrt. Rust SDK builds to be added once
+  `rust/host` is confirmed in the SDK image.
+
+### Phase 4 checklist
+
+- [x] Port fips to `net/fips/` with `rust-package.mk`
+- [x] Port tollgate-rs to `net/tollgate-rs/` with `rust-package.mk`
+- [x] Port mptcp-bonding to `net/mptcp-bonding/`
+- [x] Update AGENTS.md, README.md
+- [x] Generalize validate-feed.yml CI for all packages
+- [x] Add rust-smoke CI job
+- [ ] _(future)_ First green Rust SDK build
+- [ ] _(future)_ Lift Rust packages into `openwrt/packages` PRs
