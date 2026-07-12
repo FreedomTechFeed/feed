@@ -133,9 +133,6 @@ jobs:
   rust-smoke:
     name: Rust cross-compile ${{ matrix.package }} (no SDK)
     runs-on: ubuntu-latest
-    # Non-blocking for now: C-dep crates (ring, tun) may need musl cross-headers
-    # not available outside the SDK. Once confirmed green, remove continue-on-error.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
