@@ -181,8 +181,8 @@ Same pattern as golang-package.mk:
 - [x] Port fips to `net/fips/` with `rust-package.mk`
 - [x] Port tollgate-rs to `net/tollgate-rs/` with `rust-package.mk`
 - [x] Port mptcp-bonding to `net/mptcp-bonding/`
-- [x] Update AGENTS.md, README.md
+- [x] Update AGENTS.md, README.md, PLAN.md
 - [x] Generalize validate-feed.yml CI for all packages
-- [x] Add rust-smoke CI job
-- [ ] _(future)_ First green Rust SDK build
+- [x] Add rust-smoke CI job (confirmed green: fips + tollgate-rs cross-compile OK)
+- [ ] _(future)_ First green Rust SDK build via `rust-package.mk`
 - [ ] _(future)_ Lift Rust packages into `openwrt/packages` PRs
