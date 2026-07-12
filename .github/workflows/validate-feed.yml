@@ -158,6 +158,8 @@ jobs:
 
       - name: Clone and build ${{ matrix.package }} for ${{ matrix.target }}
         env:
+          # Override rust-toolchain.toml pin so we use the target we installed.
+          RUSTUP_TOOLCHAIN: stable
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CC_x86_64_unknown_linux_musl: musl-gcc
           AR_x86_64_unknown_linux_musl: ar
