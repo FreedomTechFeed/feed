@@ -86,9 +86,14 @@ endef
 # $(PKG_BUILD_DIR)/go.mod. Extract to $(BUILD_DIR) so $(PKG_BUILD_DIR) (the
 # src/ subdir) is reliably populated, and print the layout so CI logs show
 # whether the go.mod-not-found issue is extraction or deeper in golang-build.sh.
+#
+# NOTE: use `-xf <file>` explicitly, NOT `$(TAR_OPTIONS)`. OpenWrt defines
+# TAR_OPTIONS:=-xf -` (read archive from stdin), which only works when the
+# archive is piped in. Here the archive is a downloaded file in $(DL_DIR), so
+# we must name it directly on the command line.
 define Build/Prepare
 	mkdir -p $(BUILD_DIR)
-	$(TAR) -C $(BUILD_DIR) $(TAR_OPTIONS) $(DL_DIR)/$(PKG_SOURCE)
+	$(TAR) -C $(BUILD_DIR) -xf $(DL_DIR)/$(PKG_SOURCE)
 	$(Build/Patch)
 	@echo "=== PKG_BUILD_DIR = $(PKG_BUILD_DIR) ==="
 	@ls -la $(PKG_BUILD_DIR)
