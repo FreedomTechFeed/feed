@@ -147,15 +147,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain + target
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+
+      - name: Add musl target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Install musl-gcc
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Clone and build ${{ matrix.package }} for ${{ matrix.target }}
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          AR_x86_64_unknown_linux_musl: ar
         run: |
           set -e
           PKG_DIR="net/${{ matrix.package }}"
@@ -167,21 +172,17 @@ jobs:
           cd /tmp/src
           git checkout "$SOURCE_VERSION"
 
-          # Determine which binary/binaries to build
+          echo "Installed targets:"
+          rustup target list --installed
+
           case "${{ matrix.package }}" in
             fips)
               cargo build --release --target ${{ matrix.target }} \
-                --bin fips --bin fipsctl --bin fipstop --bin fips-gateway || {
-                echo "::warning::Rust cross-compile failed (expected for some C-dep crates without musl cross-headers)"
-                exit 1
-              }
+                --bin fips --bin fipsctl --bin fipstop --bin fips-gateway
               ;;
             tollgate-rs)
               cargo build --release --target ${{ matrix.target }} \
-                --package tollgate-net || {
-                echo "::warning::Rust cross-compile failed (expected for some C-dep crates without musl cross-headers)"
-                exit 1
-              }
+                --package tollgate-net
               ;;
           esac
           echo "Cross-compile OK for ${{ matrix.package }}"
