@@ -132,9 +132,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Temporary: x86-64 only — get a fast first green + cached run, then
-          # re-add mediatek-filogic (GL-MT6000) and ramips-mt7621 (GL-MT3000).
-          - { target: x86-64, desc: "host-runnable (amd64)" }
+          - { target: x86-64,          desc: "host-runnable (amd64)" }
+          - { target: mediatek-filogic, desc: "GL-MT6000 (aarch64)" }
+          - { target: ramips-mt7621,    desc: "GL-MT3000 (mipsle)" }
     container:
       image: openwrt/sdk:${{ matrix.target }}-master
       options: --user root
