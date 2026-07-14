@@ -120,8 +120,8 @@ jobs:
     # The authoritative proof that the package compiles inside the OpenWrt
     # build system via golang-package.mk (incl. the nested CLI module build).
     # Slow (~30-60 min/job: it bootstraps the Go toolchain). Runs on main
-    # pushes, PRs, tags, weekly, and manual dispatch. The 3-target matrix
-    # proves the real TollGate hardware arches alongside x86-64.
+    # pushes, PRs, tags, weekly, and manual dispatch. The 6-target matrix
+    # gives full architecture parity with tollgate-module-basic-go.
     if: >-
       github.event_name == 'pull_request'
       || github.event_name == 'workflow_dispatch'
@@ -132,9 +132,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Temporary: x86-64 only — get a fast first green + cached run, then
-          # re-add mediatek-filogic (GL-MT6000) and ramips-mt7621 (GL-MT3000).
-          - { target: x86-64, desc: "host-runnable (amd64)" }
+          # Full 6-target parity with tollgate-module-basic-go build-package.yml.
+          - { target: x86-64,            desc: "host-runnable (amd64)" }
+          - { target: bcm27xx-bcm2711,   desc: "RPi4 (aarch64)" }
+          - { target: bcm27xx-bcm2709,   desc: "RPi3 (armv7)" }
+          - { target: ath79-generic,     desc: "generic mips (BE)" }
     container:
       image: openwrt/sdk:${{ matrix.target }}-master
       options: --user root
@@ -152,7 +154,7 @@ jobs:
         # Cache the built Go toolchain (golang/host) + build state so re-runs
         # skip the ~40 min Go bootstrap. run_id makes the key unique (always
         # re-saves); restore-keys prefix finds the previous run's cache for
-        # this target. Note: 10 GB/repo cap — 3 arches may occasionally evict
+        # this target. Note: 10 GB/repo cap — 6 arches may occasionally evict
         # (self-healing: one cold run, then re-cached).
         uses: actions/cache@v4
         with:
