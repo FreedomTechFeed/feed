@@ -229,35 +229,16 @@ jobs:
 
       - name: Run binary smoke test
         # Only x86-64 produces a host-runnable binary; the GitHub runner is
-        # x86-64, so we can extract the .apk and actually execute the binary
-        # to prove it runs, not just compiles.
+        # x86-64, so we can find the compiled binary in the SDK build_dir
+        # and actually execute it to prove it runs, not just compiles.
         if: matrix.target == 'x86-64'
         shell: bash
         run: |
           set -e
-          cd "$GITHUB_WORKSPACE/artifacts"
-          APK=$(ls tollgate-wrt-*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            IPK=$(ls tollgate-wrt-*.ipk 2>/dev/null | head -1)
-            [ -n "$IPK" ] || { echo "FAIL: no tollgate-wrt package found"; exit 1; }
-            echo "No .apk found, extracting from .ipk: $IPK"
-            # .ipk is an ar archive containing data.tar.gz
-            ar x "$IPK" data.tar.gz 2>/dev/null || true
-            mkdir -p /tmp/pkg-extract
-            tar -xzf data.tar.gz -C /tmp/pkg-extract 2>/dev/null || tar -xzf data.tar.gz -C /tmp/pkg-extract
-          else
-            echo "Extracting .apk: $APK"
-            # OpenWrt .apk files use zstd compression (APK v3 format),
-            # not gzip. Let tar auto-detect, fall back to zstd explicitly.
-            mkdir -p /tmp/pkg-extract
-            tar -xf "$APK" -C /tmp/pkg-extract 2>/dev/null || \
-              zstd -dc "$APK" | tar -x -C /tmp/pkg-extract 2>/dev/null || \
-              tar -xzf "$APK" -C /tmp/pkg-extract
-          fi
-          BINARY=$(find /tmp/pkg-extract -name 'tollgate-wrt' -type f | head -1)
-          [ -n "$BINARY" ] || { echo "FAIL: tollgate-wrt binary not found in package"; exit 1; }
+          echo "Searching SDK build_dir for compiled tollgate-wrt binary..."
+          BINARY=$(find /builder/build_dir -name 'tollgate-wrt' -type f -perm -u+x | head -1)
+          [ -n "$BINARY" ] || { echo "FAIL: tollgate-wrt binary not found in build_dir"; exit 1; }
           echo "Found binary: $BINARY"
-          chmod +x "$BINARY"
           echo "=== version output ==="
           "$BINARY" version 2>/dev/null || "$BINARY" --version 2>/dev/null || {
             echo "WARN: version command failed, trying help"
@@ -265,7 +246,7 @@ jobs:
           }
           echo ""
           echo "=== CLI binary check ==="
-          CLI=$(find /tmp/pkg-extract -name 'tollgate' -o -name 'tollgate-cli' -type f | head -1)
+          CLI=$(find /builder/build_dir -name 'tollgate' -o -name 'tollgate-cli' | grep -E '/usr/bin/' | head -1)
           if [ -n "$CLI" ]; then
             chmod +x "$CLI"
             "$CLI" version 2>/dev/null || "$CLI" --version 2>/dev/null || true
