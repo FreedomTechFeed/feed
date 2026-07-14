@@ -247,9 +247,12 @@ jobs:
             tar -xzf data.tar.gz -C /tmp/pkg-extract 2>/dev/null || tar -xzf data.tar.gz -C /tmp/pkg-extract
           else
             echo "Extracting .apk: $APK"
-            # OpenWrt .apk files are gzip tarballs
+            # OpenWrt .apk files use zstd compression (APK v3 format),
+            # not gzip. Let tar auto-detect, fall back to zstd explicitly.
             mkdir -p /tmp/pkg-extract
-            tar -xzf "$APK" -C /tmp/pkg-extract
+            tar -xf "$APK" -C /tmp/pkg-extract 2>/dev/null || \
+              zstd -dc "$APK" | tar -x -C /tmp/pkg-extract 2>/dev/null || \
+              tar -xzf "$APK" -C /tmp/pkg-extract
           fi
           BINARY=$(find /tmp/pkg-extract -name 'tollgate-wrt' -type f | head -1)
           [ -n "$BINARY" ] || { echo "FAIL: tollgate-wrt binary not found in package"; exit 1; }
