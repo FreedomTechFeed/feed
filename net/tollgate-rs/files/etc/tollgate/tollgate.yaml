@@ -1,0 +1,20 @@
+# TollGate-RS node configuration.
+#
+# STATUS: skeleton — the config schema is still evolving (see the
+# tollgate-rs ROADMAP). This file is installed as "conffile" semantics: opkg/apk
+# will not overwrite local edits on upgrade. The daemon searches, in order:
+#   ./tollgate.yaml, ~/.config/tollgate/tollgate.yaml, /etc/tollgate/tollgate.yaml
+#
+# Fields below mirror the bootstrap-only plain-IP mode described in
+# crates/tollgate-net/src/main.rs. Uncomment and edit before first run.
+
+# Listen address for peer/control traffic. Default: 127.0.0.1:4747
+#listen: "0.0.0.0:4747"
+
+# Cashu mint the node draws/spends bootstrap tokens on.
+#mint: "http://mint.example:3338"
+
+# Metering policy for paid sessions.
+#meter:
+#  seconds_per_token: 60
+#  bytes_per_token: 1048576

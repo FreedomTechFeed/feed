@@ -1,0 +1,7 @@
+# UCI overrides for the tollgate-rs init script.
+# `uci set tollgate-rs.main.enabled=0` disables autostart.
+
+config main 'main'
+	option enabled '1'
+	# Override the listen address (default comes from /etc/tollgate/tollgate.yaml).
+	#option listen '0.0.0.0:4747'

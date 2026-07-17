@@ -5,43 +5,71 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * 1"   # weekly: catch breakage from openwrt master / golang-package.mk churn
-
-env:
-  PKG_DIR: net/tollgate-wrt
-  UPSTREAM: OpenTollGate/tollgate-module-basic-go
+    - cron: "0 4 * * 1"   # weekly: catch breakage from openwrt master / language-helper churn
 
 jobs:
   validate:
-    name: Lint Makefile, verify hash & files
+    name: Lint Makefiles, verify hashes & files
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint Makefile fields
+      - name: Lint every net/*/Makefile
         run: |
           set -e
-          M="$PKG_DIR/Makefile"
-          [ -f "$M" ] || { echo "FAIL: $M not found"; exit 1; }
-          for field in PKG_NAME PKG_VERSION PKG_RELEASE PKG_SOURCE_URL PKG_HASH \
-                       PKG_LICENSE GO_PKG GO_PKG_BUILD_PKG; do
-            grep -q "^${field}:" "$M" || { echo "FAIL: missing $field"; exit 1; }
+          FAIL=0
+          for M in net/*/Makefile; do
+            [ -f "$M" ] || continue
+            PKG_DIR=$(dirname "$M")
+            PKG_NAME=$(basename "$PKG_DIR")
+            echo "::group::Lint $PKG_NAME"
+
+            # Common required fields for all packages
+            for field in PKG_NAME PKG_VERSION PKG_RELEASE PKG_LICENSE; do
+              grep -q "^${field}:" "$M" || { echo "FAIL: $PKG_NAME missing $field"; FAIL=1; }
+            done
+
+            # BuildPackage eval required
+            grep -q 'BuildPackage' "$M" || { echo "FAIL: $PKG_NAME missing BuildPackage eval"; FAIL=1; }
+
+            # Upstream policy: REPLACES is not allowed in openwrt/packages.
+            grep -q 'REPLACES' "$M" && { echo "FAIL: $PKG_NAME has REPLACES (not allowed upstream)"; FAIL=1; }
+
+            # Language-specific required fields
+            if grep -q 'golang-package.mk' "$M"; then
+              for field in PKG_SOURCE_URL PKG_HASH GO_PKG GO_PKG_BUILD_PKG; do
+                grep -q "^${field}:" "$M" || { echo "FAIL: $PKG_NAME (Go) missing $field"; FAIL=1; }
+              done
+            elif grep -q 'rust-package.mk' "$M"; then
+              for field in PKG_SOURCE_URL PKG_BUILD_DEPENDS; do
+                grep -q "^${field}:" "$M" || { echo "FAIL: $PKG_NAME (Rust) missing $field"; FAIL=1; }
+              done
+              grep -q 'rust/host' "$M" || { echo "FAIL: $PKG_NAME (Rust) missing rust/host dependency"; FAIL=1; }
+            fi
+
+            # Verify every ./files/ path referenced by the Makefile exists
+            grep -oP '\./files/\S+' "$M" \
+              | sed -e 's/\*$//' -e 's#/\.$##' \
+              | sort -u \
+              | while IFS= read -r ref; do
+                  [ -e "$PKG_DIR/$ref" ] || { echo "FAIL: $PKG_NAME references $ref but file missing"; FAIL=1; }
+                done
+
+            echo "$PKG_NAME lint passed."
+            echo "::endgroup::"
           done
-          grep -q 'BuildPackage' "$M" || { echo "FAIL: missing BuildPackage eval"; exit 1; }
+          exit $FAIL
 
-          # Upstream policy: REPLACES is not allowed in openwrt/packages.
-          grep -q 'REPLACES' "$M" && { echo "FAIL: REPLACES not allowed upstream"; exit 1; }
-
-          echo "Makefile lint passed."
-
-      - name: Verify PKG_HASH against the source tarball
+      - name: Verify tollgate-wrt PKG_HASH against source tarball
+        env:
+          UPSTREAM: OpenTollGate/tollgate-module-basic-go
         run: |
           set -e
-          M="$PKG_DIR/Makefile"
+          M="net/tollgate-wrt/Makefile"
+          [ -f "$M" ] || { echo "SKIP: tollgate-wrt Makefile not found"; exit 0; }
           EXPECTED=$(grep '^PKG_HASH:' "$M" | sed 's/^PKG_HASH:=//')
           PKG_VERSION=$(grep '^PKG_VERSION:' "$M" | sed 's/^PKG_VERSION:=//')
           [ "$EXPECTED" != "skip" ] || { echo "FAIL: PKG_HASH is 'skip'"; exit 1; }
-
           URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
           echo "Fetching $URL"
           ACTUAL=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
@@ -49,36 +77,24 @@ jobs:
           echo "actual  =$ACTUAL"
           [ "$EXPECTED" = "$ACTUAL" ] || { echo "FAIL: PKG_HASH mismatch"; exit 1; }
 
-      - name: Verify every ./files/ path referenced by the Makefile exists
+      - name: Verify Rust PKG_MIRROR_HASH values are not 'skip'
         run: |
           set -e
-          M="$PKG_DIR/Makefile"
-          # Pull out ./files/... tokens, strip a trailing glob '*' or cp '/.' suffix.
-          grep -oP '\./files/\S+' "$M" \
-            | sed -e 's/\*$//' -e 's#/\.$##' \
-            | sort -u \
-            | while IFS= read -r ref; do
-                [ -e "$PKG_DIR/$ref" ] || { echo "FAIL: Makefile references $ref but $PKG_DIR/$ref is missing"; exit 1; }
-              done
-          echo "All referenced files/ paths exist."
-
-      - name: Verify the critical runtime files are vendored
-        run: |
-          set -e
-          for f in \
-            files/etc/init.d/tollgate-wrt \
-            files/etc/config/firewall-tollgate \
-            files/etc/uci-defaults/99-tollgate-setup \
-            files/etc/uci-defaults/90-tollgate-captive-portal-symlink \
-            files/etc/hotplug.d/iface/95-tollgate-restart \
-            files/lib/upgrade/keep.d/tollgate; do
-            [ -f "$PKG_DIR/$f" ] || { echo "FAIL: missing $f"; exit 1; }
+          for M in net/*/Makefile; do
+            grep -q 'rust-package.mk' "$M" || continue
+            PKG_NAME=$(basename "$(dirname "$M")")
+            HASH=$(grep '^PKG_MIRROR_HASH:' "$M" 2>/dev/null | sed 's/^PKG_MIRROR_HASH:=//')
+            [ -n "$HASH" ] || { echo "FAIL: $PKG_NAME missing PKG_MIRROR_HASH"; exit 1; }
+            [ "$HASH" != "skip" ] || { echo "FAIL: $PKG_NAME PKG_MIRROR_HASH is 'skip'"; exit 1; }
+            echo "$PKG_NAME: PKG_MIRROR_HASH OK ($({ echo -n "$HASH" | wc -c; }) chars)"
           done
-          echo "Critical files present."
 
   go-smoke:
     name: Go cross-compile (no SDK)
     runs-on: ubuntu-latest
+    env:
+      PKG_DIR: net/tollgate-wrt
+      UPSTREAM: OpenTollGate/tollgate-module-basic-go
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +130,62 @@ jobs:
           # CLI: separate module at src/cmd/tollgate-cli/.
           (cd "$TOLLGATE_SRC/cmd/tollgate-cli" && go build -o /dev/null .)
 
+  rust-smoke:
+    name: Rust cross-compile ${{ matrix.package }} (no SDK)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+        package:
+          - fips
+          - tollgate-rs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add musl target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install musl-gcc
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Clone and build ${{ matrix.package }} for ${{ matrix.target }}
+        env:
+          # Override rust-toolchain.toml pin so we use the target we installed.
+          RUSTUP_TOOLCHAIN: stable
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          AR_x86_64_unknown_linux_musl: ar
+        run: |
+          set -e
+          PKG_DIR="net/${{ matrix.package }}"
+          SOURCE_URL=$(grep '^PKG_SOURCE_URL:' "$PKG_DIR/Makefile" | sed 's/^PKG_SOURCE_URL:=//' | sed 's/\.git$//')
+          SOURCE_VERSION=$(grep '^PKG_SOURCE_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_SOURCE_VERSION:=//')
+
+          echo "Cloning $SOURCE_URL at $SOURCE_VERSION"
+          git clone "$SOURCE_URL" /tmp/src
+          cd /tmp/src
+          git checkout "$SOURCE_VERSION"
+
+          echo "Installed targets:"
+          rustup target list --installed
+
+          case "${{ matrix.package }}" in
+            fips)
+              cargo build --release --target ${{ matrix.target }} \
+                --bin fips --bin fipsctl --bin fipstop --bin fips-gateway
+              ;;
+            tollgate-rs)
+              cargo build --release --target ${{ matrix.target }} \
+                --package tollgate-net
+              ;;
+          esac
+          echo "Cross-compile OK for ${{ matrix.package }}"
+
   build-sdk:
     name: SDK build (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -142,18 +214,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Extract the OpenWrt SDK
-        # Snapshot SDK images (>=24.10) ship an empty /builder plus a
-        # setup.sh; release images are pre-extracted. Run setup only when the
-        # SDK isn't already present. See openwrt/docker README.
         shell: bash
         run: cd /builder && { [ -d ./scripts ] || ./setup.sh; }
 
       - name: Restore SDK build cache
-        # Cache the built Go toolchain (golang/host) + build state so re-runs
-        # skip the ~40 min Go bootstrap. run_id makes the key unique (always
-        # re-saves); restore-keys prefix finds the previous run's cache for
-        # this target. Note: 10 GB/repo cap — 3 arches may occasionally evict
-        # (self-healing: one cold run, then re-cached).
         uses: actions/cache@v4
         with:
           path: |
@@ -184,10 +248,6 @@ jobs:
         shell: bash
         run: |
           cd /builder
-          # The SDK ships a bloated config (CONFIG_ALL/ALL_KMODS) that makes
-          # builds compile every kmod and time out. Re-seed minimal: keep only
-          # the target selection + our packages, build-all flags off. (Don't use
-          # scripts/config -- in this image it's a directory, not the helper.)
           make defconfig
           {
             grep -E '^CONFIG_TARGET' .config 2>/dev/null

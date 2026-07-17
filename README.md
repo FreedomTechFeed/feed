@@ -1,16 +1,17 @@
-# TollGate OpenWrt Feed
+# Freedom Tech OpenWrt Feed
 
-An OpenWrt package feed that builds **`tollgate-wrt`** from the upstream
-[`OpenTollGate/tollgate-module-basic-go`](https://github.com/OpenTollGate/tollgate-module-basic-go)
-source using OpenWrt's `golang-package.mk`.
+An OpenWrt package feed with four independent packages:
 
-TollGate turns an OpenWrt router into a Cashu-powered payment gateway for
-internet access. This feed produces a single package that installs both
-binaries — the `tollgate-wrt` service and the `tollgate` CLI — plus its init
-scripts, UCI defaults, captive-portal site, and hotplug hooks.
+| Package | Language | What it does |
+|---|---|---|
+| **tollgate-wrt** | Go | Cashu-powered WiFi payment gateway |
+| **fips** | Rust | Decentralized mesh networking daemon |
+| **tollgate-rs** | Rust | Cashu metered network access node |
+| **mptcp-bonding** | shell | MPTCP multi-WAN bonding client |
 
-The upstream repository is **not modified** by this feed. It is downloaded,
-built, and packaged entirely from the release source tarball.
+Each package lives in its own `net/<name>/` directory and builds independently.
+Go packages use `golang-package.mk`; Rust packages use `rust-package.mk`;
+shell-only packages have no language helper.
 
 ## Why a separate feed repo
 
@@ -27,6 +28,31 @@ means:
   [`openwrt/packages`](https://github.com/openwrt/packages) as a small,
   reviewable addition.
 
+## Packages
+
+### tollgate-wrt (Go)
+
+Cashu-powered WiFi payment gateway. Builds two binaries (`tollgate-wrt`
+service + `tollgate` CLI) from the upstream source tarball via
+`golang-package.mk`. Depends on `nodogsplash` and `jq`.
+
+### fips (Rust)
+
+Distributed, decentralized mesh networking daemon. Four binaries: `fips`
+(daemon), `fipsctl` (CLI), `fipstop` (TUI), `fips-gateway` (LAN gateway).
+Built via `rust-package.mk`. Depends on `kmod-tun`, `kmod-nft-nat`.
+
+### tollgate-rs (Rust)
+
+Rust TollGate node — sells metered network access for Cashu micropayments.
+One binary (`tollgate`). Built via `rust-package.mk` from the `tollgate-net`
+workspace member. Work in progress — protocol surface still evolving.
+
+### mptcp-bonding (shell)
+
+MPTCP multi-WAN bonding client. Ships sysctl config, procd init, UCI schema,
+and a setup-bond helper. No compilation. Depends on `shadowsocks-libev-ss-redir`.
+
 ## Using the feed
 
 Add it to an OpenWrt build:
@@ -34,15 +60,15 @@ Add it to an OpenWrt build:
 ```sh
 echo "src-git tollgate https://github.com/FreedomTechFeed/feed.git" >> feeds.conf
 ./scripts/feeds update tollgate
-./scripts/feeds install tollgate-wrt
+./scripts/feeds install tollgate-wrt fips tollgate-rs mptcp-bonding
 ```
 
-Then enable it in `make menuconfig` under **Network → Captive Portals →
-tollgate-wrt**, and build.
+Then enable packages in `make menuconfig` under **Network**, and build.
 
-> The package depends on `nodogsplash` and `jq`, which come from the standard
-> `packages` feed — keep that feed enabled too. `golang-package.mk` (the Go
-> build helpers) also comes from the `packages` feed.
+> Go packages depend on `nodogsplash` and `jq`; Rust packages depend on the
+> `rust/host` toolchain; `mptcp-bonding` depends on `shadowsocks-libev-ss-redir`.
+> All come from the standard `packages` feed — keep it enabled. The language
+> helpers (`golang-package.mk`, `rust-package.mk`) also come from there.
 
 ## How it builds two binaries in one package
 
@@ -84,9 +110,9 @@ for the full design and the highest-risk item.
 
 ## Submitting to `openwrt/packages` (future)
 
-When this feed is green in CI, the `net/tollgate-wrt/` directory can be lifted
-into a PR against `openwrt/packages`. The only change required is the
-`golang-package.mk` include path:
+When each package is green in CI, its `net/<name>/` directory can be lifted
+individually into a PR against `openwrt/packages`. The only change required
+is the language-helper include path:
 
 ```diff
 -include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
