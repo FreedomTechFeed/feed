@@ -136,15 +136,19 @@ jobs:
           - { target: mediatek-filogic, desc: "GL-MT6000 (aarch64)" }
           - { target: ramips-mt7621,    desc: "GL-MT3000 (mipsle)" }
     container:
-      image: openwrt/sdk:${{ matrix.target }}-master
+      image: openwrt/sdk:${{ matrix.target }}-v25.12.5
       options: --user root
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract the OpenWrt SDK
-        # Snapshot SDK images (>=24.10) ship an empty /builder plus a
-        # setup.sh; release images are pre-extracted. Run setup only when the
-        # SDK isn't already present. See openwrt/docker README.
+        # PINNED release images (openwrt/sdk:*-v25.12.5) are pre-extracted
+        # (./scripts present) so setup.sh is skipped. We pin release tags —
+        # NOT the moving :*-master images (rebuilt ~2026-08-14 with glibc
+        # >=2.42 / iconv removal, breaking gettext-full; and snapshot SDK
+        # tarballs hit mirror sha256 skew). Release images are frozen at the
+        # 25.12.x toolchain (glibc < 2.42) and pre-extracted, fixing both.
+        # See openwrt/docker README.
         shell: bash
         run: cd /builder && { [ -d ./scripts ] || ./setup.sh; }
 
