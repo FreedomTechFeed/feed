@@ -101,14 +101,26 @@ define Build/Prepare
 endef
 
 # Build both binaries: the service via the framework helper, then the CLI from
-# its separate module directory. The framework helper handles the service; the
-# CLI lives in a sibling go module so we build it manually. Make runs each
-# recipe line in a SEPARATE shell, so the cross-compile environment set up by
-# GoPackage/Build/Compile does NOT carry over. We must re-establish it via
-# $(GO_PKG_VARS), which adds `go` to PATH and exports GOOS/GOARCH/GOARM/GOMIPS/
-# CGO_ENABLED/CC/GOCACHE/GOMODCACHE — exactly what the framework uses. The -X
-# ldflags are harmless no-ops for the CLI module (it does not contain those
-# symbols).
+# its separate module directory.
+#
+# WHY this override is REQUIRED (not stylistic): the CLI is its own Go module
+# (`module tollgate-cli`, go.mod at src/cmd/tollgate-cli/go.mod), SEPARATE from
+# the main module golang-package.mk operates on. GO_PKG_BUILD_PKG cannot cross
+# module boundaries — the framework's Build/Compile runs `go install` inside the
+# CURRENT module (src/), so it can only build packages in the main module
+# (github.com/OpenTollGate/tollgate-module-basic-go); pointing GO_PKG_BUILD_PKG
+# at the CLI's import path would fail. Hence the CLI must be built manually
+# from its own module dir, reusing the framework's exported cross-compile
+# environment. Upstream PR #125 tried to avoid this by restructuring the Go
+# source (src/ -> repo root) but was abandoned (~120 files, never rebased), so
+# this override is the supported way to ship both binaries from one package.
+#
+# Make runs each recipe line in a SEPARATE shell, so the cross-compile
+# environment set up by GoPackage/Build/Compile does NOT carry over to the
+# second recipe line. We must re-establish it via $(GO_PKG_VARS), which adds
+# `go` to PATH and exports GOOS/GOARCH/GOARM/GOMIPS/CGO_ENABLED/CC/GOCACHE/
+# GOMODCACHE — exactly what the framework uses. The -X ldflags are harmless
+# no-ops for the CLI module (it does not contain those symbols).
 define Build/Compile
 	$(call GoPackage/Build/Compile)
 	cd $(PKG_BUILD_DIR)/cmd/tollgate-cli && \

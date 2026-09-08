@@ -93,6 +93,14 @@ into a PR against `openwrt/packages`. The only change required is the
 +include ../../lang/golang/golang-package.mk
 ```
 
+Why this swap: as a standalone `src-git` feed, the Go helpers live in the
+consumer's installed `packages` feed, so the Makefile anchors at
+`$(TOPDIR)/feeds/packages/lang/golang/...`. Inside `openwrt/packages` the file
+sits at `net/tollgate-wrt/Makefile`, where the helpers are reached via the
+relative `../../lang/golang/golang-package.mk` include. This one-line swap is
+the only feed-vs-upstream difference; the module layout and the `Build/Compile`
+override (see the comments in the Makefile) are already upstream-compatible.
+
 Follow the
 [`openwrt/packages` contributing guide](https://github.com/openwrt/packages/blob/master/CONTRIBUTING.md)
 (Signed-off-by, commit-message format) when opening that PR.
