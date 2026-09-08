@@ -80,7 +80,7 @@ define Package/tollgate-wrt/conffiles
 /etc/tollgate/config.json
 /etc/tollgate/install.json
 /etc/tollgate/identities.json
-/etc/config/firewall-tollgate
+/etc/nftables.d/20-nds-enforce.nft
 endef
 
 # Deterministic extraction + layout diagnostic. Upstream's go.mod lives in a
@@ -192,8 +192,12 @@ define Package/tollgate-wrt/install
 	$(INSTALL_BIN) ./files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
 
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DATA) ./files/etc/config/firewall-tollgate $(1)/etc/config/
+	$(INSTALL_DIR) $(1)/etc/nftables.d
+	$(INSTALL_DATA) ./files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
+	$(INSTALL_DATA) ./files/etc/nftables.d/30-backend-firewall.nft $(1)/etc/nftables.d/
+
+	$(INSTALL_DIR) $(1)/usr/share/man/man8
+	$(INSTALL_DATA) ./files/man/man8/*.8 $(1)/usr/share/man/man8/
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/95-tollgate-restart $(1)/etc/hotplug.d/iface/
