@@ -119,6 +119,21 @@ relative `../../lang/golang/golang-package.mk` include. This one-line swap is
 the only feed-vs-upstream difference; the module layout and the `Build/Compile`
 override (see the comments in the Makefile) are already upstream-compatible.
 
+The package already satisfies the core `openwrt/packages` packaging
+requirements, so no further restructuring is needed before the PR:
+
+- `PKG_MAINTAINER` is a real individual — `Felix <felix@tollgate.me>` — so it
+  passes `buildbots` `check_pkg_utils`/`check_noreply_email` (a `noreply`
+  address or a bare project address would fail upstream CI).
+- the init script (`files/etc/init.d/tollgate-wrt`) is procd-compliant
+  (`USE_PROCD=1` with `start_service()` and the
+  `procd_open_instance`/`procd_set_param`/`procd_close_instance` calls);
+- the package declares its config files via the
+  `Package/tollgate-wrt/conffiles` block (`/etc/tollgate/` and
+  `/etc/config/firewall-tollgate`), so user config survives upgrades;
+- `DEPENDS` pulls only `nodogsplash`, `jq`, and `$(GO_ARCH_DEPENDS)` —
+  no `luci` dependency, keeping the runtime footprint minimal.
+
 Follow the
 [`openwrt/packages` contributing guide](https://github.com/openwrt/packages/blob/master/CONTRIBUTING.md)
 (Signed-off-by, commit-message format) when opening that PR.
