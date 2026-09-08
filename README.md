@@ -129,8 +129,14 @@ requirements, so no further restructuring is needed before the PR:
   (`USE_PROCD=1` with `start_service()` and the
   `procd_open_instance`/`procd_set_param`/`procd_close_instance` calls);
 - the package declares its config files via the
-  `Package/tollgate-wrt/conffiles` block (`/etc/tollgate/` and
-  `/etc/config/firewall-tollgate`), so user config survives upgrades;
+  `Package/tollgate-wrt/conffiles` block (the plain config files under
+  `/etc/tollgate/` — `config.json`, `install.json`, `identities.json` — plus
+  `/etc/config/firewall-tollgate`), using file entries (not a bare directory)
+  per `openwrt/packages`/arinc9 `BondingShouldBeFree` conffile norm. At
+  build time `scripts/ipkg-build` resolves only files present in the package
+  data tree (the portal site under `/etc/tollgate/` is runtime-installed),
+  while `files/lib/upgrade/keep.d/tollgate` ensures the entire
+  `/etc/tollgate/` hierarchy persists through sysupgrade;
 - `DEPENDS` pulls only `nodogsplash`, `jq`, and `$(GO_ARCH_DEPENDS)` —
   no `luci` dependency, keeping the runtime footprint minimal.
 

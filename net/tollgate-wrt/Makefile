@@ -77,7 +77,9 @@ define Package/tollgate-wrt/description
 endef
 
 define Package/tollgate-wrt/conffiles
-/etc/tollgate/
+/etc/tollgate/config.json
+/etc/tollgate/install.json
+/etc/tollgate/identities.json
 /etc/config/firewall-tollgate
 endef
 
