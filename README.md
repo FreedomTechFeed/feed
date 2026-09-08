@@ -92,10 +92,10 @@ in the test environment after installing the package:
   `/usr/bin/tollgate`. Exit 0 = pass, 1 = fail.
 - **`test-version.sh`** — confirms the CLI (`/usr/bin/tollgate`) is present and
   that its version output contains the package version (`PKG_VERSION`, i.e.
-  `0.5.0`). The CLI exposes the version through a cobra `version` subcommand
+  `0.6.0-alpha1`). The CLI exposes the version through a cobra `version` subcommand
   (there is no `--version` flag), so the script probes `--version` first and
   falls back to `version`. The version string is injected via the feed's
-  LDFLAGS as `cli.Version="v$(PKG_VERSION)"`, so `0.5.0` always appears.
+  LDFLAGS as `cli.Version="v$(PKG_VERSION)"`, so `0.6.0-alpha1` always appears.
   Exit 0 = pass, 1 = fail.
 
 Both scripts are POSIX `sh` and pass `shellcheck -s sh`.

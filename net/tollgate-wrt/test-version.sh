@@ -9,13 +9,13 @@
 # The CLI exposes the version through a cobra `version` subcommand (it has no
 # --version flag), so we accept either a --version probe or the subcommand.
 # The version string is injected via the feed's LDFLAGS as
-# cli.Version="v$(PKG_VERSION)" (i.e. "v0.5.0"), so a bare "0.5.0" always
-# appears in the reported version either way.
+# cli.Version="v$(PKG_VERSION)" (i.e. "v0.6.0-alpha1"), so a bare "0.6.0"
+# always appears in the reported version either way.
 #
 # Exit status: 0 = pass, 1 = fail.
 
 BINARY="/usr/bin/tollgate"
-PKG_VERSION="0.5.0"
+PKG_VERSION="0.6.0-alpha1"
 
 if [ ! -x "$BINARY" ]; then
     echo "FAIL: $BINARY not found" >&2
@@ -26,7 +26,7 @@ fi
 # shellcheck disable=SC2312
 OUTPUT=$("$BINARY" --version 2>/dev/null || "$BINARY" version 2>&1)
 
-if printf '%s\n' "$OUTPUT" | grep -qi "0\.5\.0"; then
+if printf '%s\n' "$OUTPUT" | grep -qi "0\.6\.0"; then
     echo "PASS: $BINARY reports version $PKG_VERSION"
     exit 0
 fi

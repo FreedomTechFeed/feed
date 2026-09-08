@@ -19,12 +19,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tollgate-wrt
-PKG_VERSION:=0.5.0
+PKG_VERSION:=0.6.0-alpha1
 PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=a547c03cbdfe681e6315e1b6d0e00414daf845a05d20851b92ce55e749edd422
+PKG_HASH:=c0ca1b37cbccde8e46de8e42287185d322c648bb10ad317b3e496a136a0e35f7
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only

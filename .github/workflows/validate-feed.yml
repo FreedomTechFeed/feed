@@ -67,7 +67,8 @@ jobs:
           set -e
           for f in \
             files/etc/init.d/tollgate-wrt \
-            files/etc/config/firewall-tollgate \
+            files/etc/nftables.d/20-nds-enforce.nft \
+            files/etc/nftables.d/30-backend-firewall.nft \
             files/etc/uci-defaults/99-tollgate-setup \
             files/etc/uci-defaults/90-tollgate-captive-portal-symlink \
             files/etc/hotplug.d/iface/95-tollgate-restart \
