@@ -162,7 +162,7 @@ setup_nodogsplash() {
     uci set nodogsplash.@nodogsplash[0].authidletimeout='3600'
 
     # Defense-in-depth: block authenticated WiFi clients from reaching
-    # RFC1918 addresses (complements the fw4 DROP rules in firewall-tollgate).
+    # RFC1918 addresses (complements the fw4 DROP rules in 30-backend-firewall.nft).
     local nds_auth
     nds_auth=$(uci -q get nodogsplash.@nodogsplash[0].authenticated_users 2>/dev/null || echo "")
     if ! echo "$nds_auth" | grep -q "10.0.0.0/8"; then
