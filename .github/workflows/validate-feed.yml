@@ -39,10 +39,12 @@ jobs:
           set -e
           M="$PKG_DIR/Makefile"
           EXPECTED=$(grep '^PKG_HASH:' "$M" | sed 's/^PKG_HASH:=//')
-          PKG_VERSION=$(grep '^PKG_VERSION:' "$M" | sed 's/^PKG_VERSION:=//')
+          # The upstream git tag (PKG_SOURCE_VERSION, hyphenated) drives the
+          # codeload URL, NOT the apk-legal PKG_VERSION (underscored).
+          PKG_SOURCE_VERSION=$(grep '^PKG_SOURCE_VERSION:' "$M" | sed 's/^PKG_SOURCE_VERSION:=//')
           [ "$EXPECTED" != "skip" ] || { echo "FAIL: PKG_HASH is 'skip'"; exit 1; }
 
-          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
+          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_SOURCE_VERSION}"
           echo "Fetching $URL"
           ACTUAL=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
           echo "expected=$EXPECTED"
@@ -99,10 +101,13 @@ jobs:
       - name: Download pinned upstream source
         run: |
           set -e
-          PKG_VERSION=$(grep '^PKG_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_VERSION:=//')
-          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
+          # PKG_SOURCE_VERSION (hyphenated upstream tag) names the codeload
+          # tarball; the apk-legal PKG_VERSION (underscored) must not appear
+          # in the URL or the extract dir name.
+          PKG_SOURCE_VERSION=$(grep '^PKG_SOURCE_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_SOURCE_VERSION:=//')
+          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_SOURCE_VERSION}"
           curl -fsSL "$URL" | tar -xz
-          echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-$PKG_VERSION/src" >> "$GITHUB_ENV"
+          echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-$PKG_SOURCE_VERSION/src" >> "$GITHUB_ENV"
 
       - name: Build service + CLI for ${{ matrix.goarch }}
         env:
