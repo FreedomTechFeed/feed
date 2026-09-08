@@ -53,12 +53,15 @@ jobs:
         run: |
           set -e
           M="$PKG_DIR/Makefile"
-          # Pull out ./files/... tokens, strip a trailing glob '*' or cp '/.' suffix.
+          # Pull out ./files/... tokens, strip a cp '/.' suffix, and drop any
+          # glob (e.g. man/man8/*.8) down to its directory so the existence
+          # check below can expand it.
           grep -oP '\./files/\S+' "$M" \
-            | sed -e 's/\*$//' -e 's#/\.$##' \
+            | sed -e 's#/\.$##' -e 's/\*.*$//' \
             | sort -u \
             | while IFS= read -r ref; do
-                [ -e "$PKG_DIR/$ref" ] || { echo "FAIL: Makefile references $ref but $PKG_DIR/$ref is missing"; exit 1; }
+                # shellcheck disable=SC2086
+                [ -e $PKG_DIR/$ref ] || { echo "FAIL: Makefile references $ref but $PKG_DIR/$ref is missing"; exit 1; }
               done
           echo "All referenced files/ paths exist."
 
