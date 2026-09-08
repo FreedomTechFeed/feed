@@ -82,6 +82,24 @@ expected) and commit.
 The SDK job is the gate before submitting upstream. See [`PLAN.md`](PLAN.md)
 for the full design and the highest-risk item.
 
+## Runtime test scripts
+
+`net/tollgate-wrt/` ships two scripts that the openwrt/packages buildbot runs
+in the test environment after installing the package:
+
+- **`test.sh`** — confirms both installed binaries are present and
+  executable: the service `/usr/bin/tollgate-wrt` and the CLI
+  `/usr/bin/tollgate`. Exit 0 = pass, 1 = fail.
+- **`test-version.sh`** — confirms the CLI (`/usr/bin/tollgate`) is present and
+  that its version output contains the package version (`PKG_VERSION`, i.e.
+  `0.5.0`). The CLI exposes the version through a cobra `version` subcommand
+  (there is no `--version` flag), so the script probes `--version` first and
+  falls back to `version`. The version string is injected via the feed's
+  LDFLAGS as `cli.Version="v$(PKG_VERSION)"`, so `0.5.0` always appears.
+  Exit 0 = pass, 1 = fail.
+
+Both scripts are POSIX `sh` and pass `shellcheck -s sh`.
+
 ## Submitting to `openwrt/packages` (future)
 
 When this feed is green in CI, the `net/tollgate-wrt/` directory can be lifted
