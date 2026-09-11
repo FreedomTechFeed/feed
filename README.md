@@ -10,7 +10,12 @@ binaries — the `tollgate-wrt` service and the `tollgate` CLI — plus its init
 scripts, UCI defaults, captive-portal site, and hotplug hooks.
 
 The upstream repository is **not modified** by this feed. It is downloaded,
-built, and packaged entirely from the release source tarball.
+built, and packaged entirely from the release source tarball. The runtime
+files (init script, UCI defaults, nftables.d drop-ins, hotplug hooks, man
+pages, captive-portal site) are not vendored here either — the Makefile
+installs them straight from the tarball's `packaging/files/` tree
+(`$(PKG_TARBALL_DIR)`), which upstream ships OpenWrt-shaped because it builds
+its own `.ipk` from the same tree.
 
 ## Why a separate feed repo
 
@@ -60,20 +65,22 @@ exported cross-compile environment. One package, both binaries —
 ## Syncing a new upstream release
 
 ```sh
-scripts/sync-from-upstream.sh v0.5.1
+scripts/sync-from-upstream.sh v0.6.0-alpha1
 ```
 
-This downloads the tarball for the given tag, recomputes `PKG_HASH`, sets
-`PKG_VERSION`, and re-vendors `packaging/files/` into `net/tollgate-wrt/files/`.
-Review the diff (the captive-portal-site assets change every release — that's
-expected) and commit.
+This downloads the tarball for the given tag, recomputes `PKG_HASH`, and sets
+`PKG_SOURCE_VERSION` (the upstream git tag) plus the apk-legal `PKG_VERSION`
+(hyphens mapped to underscores). The runtime files need no sync step — they
+ride along in the tarball's `packaging/files/` and are installed from there
+at build time. Review the diff and commit.
 
 ## Validation
 
 `.github/workflows/validate-feed.yml` runs three jobs:
 
 1. **validate** — Makefile lint (fields present, no `REPLACES`), `PKG_HASH`
-   verified against the live tarball, every referenced `files/` path exists.
+   verified against the live tarball, every `packaging/files/` runtime path
+   the Makefile references exists in the pinned tarball.
 2. **go-smoke** — fast `go build` of both modules for amd64/arm64/mipsle
    (no SDK, catches source breakage quickly).
 3. **build-sdk** — the authoritative proof: a real OpenWrt SDK compile of the
@@ -125,7 +132,8 @@ requirements, so no further restructuring is needed before the PR:
 - `PKG_MAINTAINER` is a real individual — `Felix <felix@tollgate.me>` — so it
   passes `buildbots` `check_pkg_utils`/`check_noreply_email` (a `noreply`
   address or a bare project address would fail upstream CI).
-- the init script (`files/etc/init.d/tollgate-wrt`) is procd-compliant
+- the init script (the tarball's `packaging/files/etc/init.d/tollgate-wrt`,
+  installed to `/etc/init.d/tollgate-wrt`) is procd-compliant
   (`USE_PROCD=1` with `start_service()` and the
   `procd_open_instance`/`procd_set_param`/`procd_close_instance` calls);
 - the package declares its config files via the
@@ -135,7 +143,8 @@ requirements, so no further restructuring is needed before the PR:
   per `openwrt/packages`/arinc9 `BondingShouldBeFree` conffile norm. At
   build time `scripts/ipkg-build` resolves only files present in the package
   data tree (the portal site under `/etc/tollgate/` is runtime-installed),
-  while `files/lib/upgrade/keep.d/tollgate` ensures the entire
+  while the tarball's `packaging/files/lib/upgrade/keep.d/tollgate` (installed
+  to `/lib/upgrade/keep.d/tollgate`) ensures the entire
   `/etc/tollgate/` hierarchy persists through sysupgrade;
 - `DEPENDS` pulls only `nodogsplash`, `jq`, and `$(GO_ARCH_DEPENDS)` —
   no `luci` dependency, keeping the runtime footprint minimal.

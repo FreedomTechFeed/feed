@@ -37,11 +37,13 @@ By putting the feed glue in **this separate repo**:
   service, then (2) a manual `go build` of the CLI from its own module dir,
   reusing the framework's exported cross-compile/toolchain env.
 - **Source fetched, not vendored.** `PKG_SOURCE_URL` downloads the upstream
-  `v0.5.0` tarball; `PKG_HASH` pins it. `PKG_BUILD_DIR` points at the tarball's
-  `src/` so `golang-package.mk` operates on the module root.
-- **Runtime `files/` ARE vendored** here (init.d, uci-defaults, captive-portal
-  site, hotplug, keep.d) — copied from upstream `packaging/files/` via
-  `scripts/sync-from-upstream.sh` and re-synced per release.
+  tarball pinned by `PKG_SOURCE_VERSION` (the upstream git tag); `PKG_HASH`
+  pins it. `PKG_BUILD_DIR` points at the tarball's `src/` so
+  `golang-package.mk` operates on the module root.
+- **Runtime files are NOT vendored** (init.d, uci-defaults, captive-portal
+  site, hotplug, keep.d, man pages). They install from the tarball's
+  `packaging/files/` tree via `$(PKG_TARBALL_DIR)` — bumping the tag pulls in
+  the matching files automatically; there is no files/ tree to keep in sync.
 - **Upstream policy compliance** (enforced by CI): no `REPLACES`, no `luci`
   dependency, `GPL-3.0-only`, real `PKG_HASH`.
 
@@ -50,10 +52,11 @@ By putting the feed glue in **this separate repo**:
 ```
 feed/
 ├── net/tollgate-wrt/
-│   ├── Makefile          # single package; builds service + CLI
-│   └── files/            # vendored from upstream packaging/files/
+│   ├── Makefile          # single package; builds service + CLI; installs
+│   │                     # runtime files from the tarball's packaging/files/
+│   └── test.sh, test-version.sh   # buildbot runtime-test scripts
 ├── scripts/
-│   └── sync-from-upstream.sh   # re-vendor files/ + recompute PKG_HASH for a tag
+│   └── sync-from-upstream.sh   # re-pin PKG_VERSION/PKG_SOURCE_VERSION/PKG_HASH for a tag
 ├── .github/workflows/
 │   └── validate-feed.yml # lint + PKG_HASH verify + OpenWrt SDK build
 ├── README.md
@@ -98,7 +101,7 @@ that proves both compile before any upstream submission.
 
 | Job | Purpose | When it runs |
 |---|---|---|
-| `validate` | Makefile field lint (no `REPLACES`), `PKG_HASH` vs the live tarball, every referenced `files/` path exists | every push/PR |
+| `validate` | Makefile field lint (no `REPLACES`), `PKG_HASH` vs the live tarball, every referenced `packaging/files/` path exists in the tarball | every push/PR |
 | `go-smoke` | plain `go build` of both Go modules for amd64/arm64/mipsle | every push/PR |
 | `build-sdk` | authoritative OpenWrt SDK compile via `golang-package.mk` | main pushes, PRs, tags, weekly, manual dispatch |
 
@@ -134,6 +137,10 @@ available.
 - [x] Wipe unneeded current repo contents
       (`FEED-MANIFEST.conf`, `docs/`, `scripts/generate-*-index.sh`, old workflow)
 - [x] Vendor `files/` from upstream `v0.5.0` and pin `PKG_HASH`
+- [x] Switch to tarball-install: install runtime files from the pinned
+      tarball's `packaging/files/` (`PKG_TARBALL_DIR`), delete the vendored
+      `files/` tree, rework the validate job's file checks to run against
+      the tarball
 - [x] Write `net/tollgate-wrt/Makefile` (single package, both binaries)
 - [x] Write `scripts/sync-from-upstream.sh` (idempotent, `shellcheck` clean)
 - [x] Write `.github/workflows/validate-feed.yml` (validate + go-smoke + build-sdk)
