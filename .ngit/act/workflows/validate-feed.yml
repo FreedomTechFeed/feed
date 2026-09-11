@@ -92,6 +92,13 @@ jobs:
   go-smoke:
     name: Go cross-compile (no SDK)
     runs-on: ubuntu-latest
+    # ngit-ci ADAPTATION: inside the act container `go build` fails while
+    # stamping VCS metadata ("error obtaining VCS status: exit status 128" --
+    # the checkout is not readable as a git repo from inside the job container).
+    # VCS stamping has no bearing on whether the code compiles, so it is turned
+    # off. Observed on the Nostr run of 2ceb9f8, job b0a168450ccc7243.
+    env:
+      GOFLAGS: -buildvcs=false
     strategy:
       fail-fast: false
       matrix:
