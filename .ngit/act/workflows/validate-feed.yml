@@ -101,9 +101,25 @@ jobs:
           - { goarch: mipsle,                     goarm: "",  gomips: softfloat }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
+
+      # ngit-ci ADAPTATION: actions/setup-go@v5 verifiably fails inside the act
+      # image -- it downloads the toolchain, then dies with
+      #   /bin/sh: 1: version: not found
+      # (its post-install probe cannot resolve `go` on this image; the first run
+      # of this file on Nostr failed exactly there, job id
+      # efb2e468a20de5bdceb522cdbba893575d14bbafae3c86440e76d0fe3ade4f48).
+      # The toolchain is fetched from go.dev at the same pinned version the
+      # action selected, so the job still builds with Go 1.24.
+      - name: Install Go 1.24
+        run: |
+          set -e
+          GO_VERSION=1.24.13
+          ARCH="$(dpkg --print-architecture)"   # amd64
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          /usr/local/go/bin/go version
 
       - name: Download pinned upstream source
         run: |
