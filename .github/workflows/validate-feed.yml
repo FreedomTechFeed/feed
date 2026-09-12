@@ -46,7 +46,16 @@ jobs:
 
           URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_SOURCE_VERSION}"
           echo "Fetching $URL"
-          ACTUAL=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
+          # Download to a file and retry: a truncated stream must not be hashed
+          # as if it were the tarball, and codeload intermittently 5xx/timeouts.
+          TARBALL="$RUNNER_TEMP/tollgate-module-basic-go-$PKG_SOURCE_VERSION.tar.gz"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL "$URL" -o "$TARBALL"; then break; fi
+            echo "::warning::codeload fetch failed (attempt $i); retrying"
+            sleep $((i * 5))
+          done
+          [ -s "$TARBALL" ] || { echo "FAIL: could not download $URL"; exit 1; }
+          ACTUAL=$(sha256sum "$TARBALL" | awk '{print $1}')
           echo "expected=$EXPECTED"
           echo "actual  =$ACTUAL"
           [ "$EXPECTED" = "$ACTUAL" ] || { echo "FAIL: PKG_HASH mismatch"; exit 1; }
@@ -63,8 +72,15 @@ jobs:
           PKG_SOURCE_VERSION=$(grep '^PKG_SOURCE_VERSION:' "$M" | sed 's/^PKG_SOURCE_VERSION:=//')
           URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_SOURCE_VERSION}"
           echo "Fetching $URL"
+          TARBALL="$RUNNER_TEMP/tollgate-module-basic-go-$PKG_SOURCE_VERSION.tar.gz"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL "$URL" -o "$TARBALL"; then break; fi
+            echo "::warning::codeload fetch failed (attempt $i); retrying"
+            sleep $((i * 5))
+          done
+          [ -s "$TARBALL" ] || { echo "FAIL: could not download $URL"; exit 1; }
           mkdir -p "$RUNNER_TEMP/tarball"
-          curl -fsSL "$URL" | tar -xz -C "$RUNNER_TEMP/tarball"
+          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/tarball"
           echo "TARBALL_ROOT=$RUNNER_TEMP/tarball/tollgate-module-basic-go-$PKG_SOURCE_VERSION" >> "$GITHUB_ENV"
 
       - name: Verify every packaging/files/ path referenced by the Makefile exists in the tarball
@@ -114,10 +130,13 @@ jobs:
           - { goarch: mipsle,                     goarm: "",  gomips: softfloat }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
 
+      # Fetch BEFORE setup-go: the extracted tarball is what supplies the
+      # go.sum files setup-go keys its module cache on. Without them
+      # ("Dependencies file is not found ... Supported file pattern: go.sum")
+      # every run cold-downloads every module from proxy.golang.org, which
+      # intermittently aborts a zip mid-stream (see the retry note in the
+      # build step below).
       - name: Download pinned upstream source
         run: |
           set -e
@@ -126,8 +145,25 @@ jobs:
           # in the URL or the extract dir name.
           PKG_SOURCE_VERSION=$(grep '^PKG_SOURCE_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_SOURCE_VERSION:=//')
           URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_SOURCE_VERSION}"
-          curl -fsSL "$URL" | tar -xz
+          TARBALL="$RUNNER_TEMP/tollgate-module-basic-go-$PKG_SOURCE_VERSION.tar.gz"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL "$URL" -o "$TARBALL"; then break; fi
+            echo "::warning::codeload fetch failed (attempt $i); retrying"
+            sleep $((i * 5))
+          done
+          [ -s "$TARBALL" ] || { echo "FAIL: could not download $URL"; exit 1; }
+          tar -xzf "$TARBALL"
           echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-$PKG_SOURCE_VERSION/src" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          # Matches the `go 1.25.0` directive in the tarball's go.mod files, so
+          # Go never has to pull a toolchain module through the same proxy.
+          go-version: "1.25"
+          # The feed repo itself has no go.sum - the Go modules live in the
+          # upstream source extracted by the step above. Keying the module
+          # cache on those go.sum files makes repeat runs download nothing.
+          cache-dependency-path: "**/go.sum"
 
       - name: Build service + CLI for ${{ matrix.goarch }}
         env:
@@ -138,10 +174,33 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: |
           set -e
+          # proxy.golang.org intermittently aborts a module zip mid-stream
+          # ("stream error: stream ID 3; INTERNAL_ERROR; received from peer"),
+          # which is what failed this job on run 34626562337. Every
+          # network-touching go command is retried: completed downloads stay
+          # in the module cache, so a retry only fetches what is missing.
+          retry() {
+            local n=0
+            until "$@"; do
+              n=$((n + 1))
+              if [ "$n" -ge 5 ]; then
+                echo "FAIL: $* - gave up after $n attempts" >&2
+                return 1
+              fi
+              echo "::warning::$* failed (attempt $n); retrying in $((n * 10))s"
+              sleep $((n * 10))
+            done
+          }
+          # Warm the module caches first; non-fatal, since the builds below
+          # retry as well (a clean cold run takes ~80 s here).
+          (cd "$TOLLGATE_SRC" && retry go mod download) || \
+            echo "::warning::go mod download was incomplete; the build steps retry"
+          (cd "$TOLLGATE_SRC/cmd/tollgate-cli" && retry go mod download) || \
+            echo "::warning::CLI go mod download was incomplete; the build steps retry"
           # Service: main module root at src/.
-          (cd "$TOLLGATE_SRC" && go build -o /dev/null .)
+          (cd "$TOLLGATE_SRC" && retry go build -o /dev/null .)
           # CLI: separate module at src/cmd/tollgate-cli/.
-          (cd "$TOLLGATE_SRC/cmd/tollgate-cli" && go build -o /dev/null .)
+          (cd "$TOLLGATE_SRC/cmd/tollgate-cli" && retry go build -o /dev/null .)
 
   build-sdk:
     name: SDK build (${{ matrix.target }})

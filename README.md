@@ -82,7 +82,9 @@ at build time. Review the diff and commit.
    verified against the live tarball, every `packaging/files/` runtime path
    the Makefile references exists in the pinned tarball.
 2. **go-smoke** — fast `go build` of both modules for amd64/arm64/mipsle
-   (no SDK, catches source breakage quickly).
+   (no SDK, catches source breakage quickly). Builds run off a Go module
+   cache keyed on the *tarball's* `go.sum` files, and the network-touching
+   steps are retried, so a flaky `proxy.golang.org` fetch cannot fail the job.
 3. **build-sdk** — the authoritative proof: a real OpenWrt SDK compile of the
    package via `golang-package.mk`, including the nested CLI-module build.
 

@@ -102,8 +102,16 @@ that proves both compile before any upstream submission.
 | Job | Purpose | When it runs |
 |---|---|---|
 | `validate` | Makefile field lint (no `REPLACES`), `PKG_HASH` vs the live tarball, every referenced `packaging/files/` path exists in the tarball | every push/PR |
-| `go-smoke` | plain `go build` of both Go modules for amd64/arm64/mipsle | every push/PR |
+| `go-smoke` | plain `go build` of both Go modules for amd64/arm64/mipsle; module cache keyed on the tarball's `go.sum`, network steps retried | every push/PR |
 | `build-sdk` | authoritative OpenWrt SDK compile via `golang-package.mk` | main pushes, PRs, tags, weekly, manual dispatch |
+
+Both network-facing jobs are hardened against transient failures: tarball
+fetches are retried, and `go-smoke` restores its Go module cache from the
+*tarball's* `go.sum` files (the feed repo has no `go.sum` of its own), so
+steady-state runs download nothing. Without that cache every run cold-pulled
+every module from `proxy.golang.org`, which intermittently aborts a zip
+mid-stream (`stream error: ... INTERNAL_ERROR; received from peer`) — that is
+what red-lit the mipsle leg of run 34626562337.
 
 `build-sdk` builds a **3-target matrix** so the real TollGate hardware arches
 are proven, not just x86-64:
@@ -147,6 +155,8 @@ available.
 - [x] Enhance `build-sdk`: run on main pushes, 3-arch matrix (x86-64 +
       mediatek-filogic + ramips-mt7621), upload package artifacts
       (smoke test intentionally omitted to keep it simple)
+- [x] Harden CI against transient network failures: retried tarball fetches,
+      `go-smoke` module cache keyed on the tarball's `go.sum`, pinned Go 1.25
 - [x] Rewrite `README.md` and `AGENTS.md`
 - [x] Verify: Makefile lint, hash check, referenced-paths check, `shellcheck`
 - [ ] _(future)_ First green `build-sdk` run across all 3 arches
