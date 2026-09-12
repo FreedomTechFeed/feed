@@ -82,6 +82,16 @@ than asserted:
 `PKG_RELEASE` owns the revision: never write `-rN` into `PKG_VERSION`, and bump
 `PKG_RELEASE` (not the version) when re-cutting identical content.
 
+Two consequences worth knowing (both measured, not guessed):
+
+- The package the build produces is named and versioned with the manager's own
+  spelling — `tollgate-wrt-0.6.0_alpha1-r1.apk` on the 25.12 SDK, with
+  `version: 0.6.0_alpha1-r1` in its control metadata.
+- The *feed index* that `./scripts/feeds` generates is written before any
+  `.config` exists, so `CONFIG_USE_APK` is unset at that point and the index
+  records the opkg spelling (`Version: 0.6.0~alpha1-r1`). That is cosmetic: it
+  is what `menuconfig` displays, not what gets built.
+
 Both spellings are checked offline by
 [`scripts/check-version-strings.sh`](scripts/check-version-strings.sh), which
 also fails on `-alphaN` markers, a hand-written `-rN`, an SPDX header that

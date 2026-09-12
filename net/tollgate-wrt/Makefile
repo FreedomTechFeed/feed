@@ -127,9 +127,17 @@ define Package/tollgate-wrt/description
 	configured Lightning addresses.
 endef
 
-# Config that must survive an upgrade. The service creates these on first run;
-# /etc/tollgate as a whole is also listed in files/lib/upgrade/keep.d/tollgate
-# so sysupgrade keeps it.
+# Config that must survive an upgrade. The service creates these on first run,
+# so they are not part of the payload - /etc/tollgate as a whole is also listed
+# in files/lib/upgrade/keep.d/tollgate, which is what covers sysupgrade.
+#
+# Verified behaviour of the two packing paths for conffiles that are not in the
+# payload (2026-09-13):
+#   * apk (package-pack.mk): kept verbatim - the built .apk carries a
+#     lib/apk/packages/tollgate-wrt.conffiles with all three paths.
+#   * opkg (scripts/ipkg-build): entries whose path is not in the package are
+#     FILTERED OUT of the .ipk (silently, not an error). So on an opkg target
+#     only the shipped conffiles would be registered; nothing breaks.
 define Package/tollgate-wrt/conffiles
 /etc/tollgate/config.json
 /etc/tollgate/identities.json
