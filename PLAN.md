@@ -77,16 +77,25 @@ This one-liner swap is the only feed-vs-upstream difference.
 
 ```makefile
 PKG_NAME:=tollgate-wrt
-PKG_VERSION:=0.5.0
+PKG_VERSION:=0.6.0_alpha1           # apk-legal package version (underscore)
+PKG_SOURCE_VERSION:=0.6.0-alpha1    # upstream git tag (hyphen): URL + dir names
 PKG_RELEASE:=1
-PKG_SOURCE:=tollgate-module-basic-go-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_VERSION)?
+PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_SOURCE_VERSION)?
 PKG_HASH:=<sha256>
-PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)/src
+PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)/src
+PKG_TARBALL_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)
 GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 GO_PKG_BUILD_PKG:=$(GO_PKG)
 DEPENDS:=+nodogsplash +jq $(GO_ARCH_DEPENDS)
 ```
+
+`PKG_VERSION` and `PKG_SOURCE_VERSION` are split because the upstream GitHub
+tag is hyphenated (`v0.6.0-alpha1`, immutable) while `apk mkpkg` rejects
+hyphens in a package version — it takes `0.6.0_alpha1` → VERSION
+`0.6.0_alpha1-r1`. Only `PKG_SOURCE_VERSION` feeds the download URL, the
+tag-named build/extract dirs and the LDFLAGS build info; `PKG_TARBALL_DIR` is
+the extraction root that the install recipe sources `packaging/files/` from.
 
 ## Highest-risk item (gated by CI)
 
