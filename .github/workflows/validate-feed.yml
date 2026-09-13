@@ -221,15 +221,47 @@ jobs:
         # test-version.sh, because neither binary implements --version (see
         # that script). Run its assertion here so the SDK job proves the
         # injected version too, not just that the package compiled.
+        #
+        # WHERE the binary is: NOT the raw build output. OpenWrt's
+        # CONFIG_AUTOREMOVE hook (include/package.mk, the `compile:` target)
+        # purges every entry at depth 1 of PKG_BUILD_DIR except empty dotfiles,
+        # .pkgdir and version.date - which deletes .go_work/, the
+        # golang-package.mk build dir that holds the raw
+        # tollgate-module-basic-go binary. What survives, and what the package
+        # actually installs, is:
+        #   <PKG_BUILD_DIR>/.pkgdir/tollgate-wrt/usr/bin/{tollgate-wrt,tollgate}
+        # plus the rootfs copy under staging_dir/target-*/root-*/usr/bin/.
+        # Assert on those - the packaged paths - never on build_dir alone.
         shell: bash
         run: |
           set -e
           cd /builder
-          BIN=$(find build_dir -type f -name 'tollgate-module-basic-go' -perm -u+x | head -1)
-          [ -n "$BIN" ] || { echo "FAIL: service binary not found in build_dir"; exit 1; }
+          BIN=""
+          for pat in \
+            '*/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt' \
+            '*/root-*/usr/bin/tollgate-wrt' \
+            '*/.go_work/build/bin/tollgate-module-basic-go'; do
+            BIN=$(find build_dir staging_dir -type f -path "$pat" 2>/dev/null | head -1)
+            if [ -n "$BIN" ]; then break; fi
+          done
+          if [ -z "$BIN" ]; then
+            echo "FAIL: packaged tollgate-wrt binary not found under build_dir/staging_dir"
+            echo "--- binaries with the expected names ---"
+            find build_dir staging_dir -type f \
+              \( -name 'tollgate-wrt' -o -name 'tollgate-module-basic-go' \) 2>/dev/null | head -20
+            echo "--- anything under a .pkgdir ---"
+            find build_dir -type f -path '*/.pkgdir/*' 2>/dev/null | head -20
+            echo "--- produced packages ---"
+            find bin -type f \( -name 'tollgate-wrt*.apk' -o -name 'tollgate-wrt*.ipk' \) -print
+            exit 1
+          fi
           SRCVER=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$GITHUB_WORKSPACE/$PKG_DIR/Makefile" | head -1)
           echo "expecting v$SRCVER in $BIN"
           strings "$BIN" | grep -F -- "v$SRCVER"
+          CLI="$(dirname "$BIN")/tollgate"
+          if [ ! -f "$CLI" ]; then CLI="$(dirname "$BIN")/tollgate-cli"; fi
+          [ -f "$CLI" ] || { echo "FAIL: CLI binary missing next to $BIN"; exit 1; }
+          echo "CLI binary present: $CLI"
 
       - name: Upload package artifact(s)
         uses: actions/upload-artifact@v4

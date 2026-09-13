@@ -124,13 +124,21 @@ if [ "$CHECK_HASH" = "1" ]; then
 	if [ -f "$WORK/src.tar.gz" ]; then
 		LIVE="$(sha256sum "$WORK/src.tar.gz" | awk '{print $1}')"
 		check "PKG_HASH == live tarball" "$HASH" "$LIVE"
-		TAR_FILES="$WORK/extracted/packaging/files"
 		mkdir -p "$WORK/extracted"
 		tar -xzf "$WORK/src.tar.gz" -C "$WORK/extracted"
-		if diff -r "$PKG_DIR/files" "$TAR_FILES" >/dev/null 2>&1; then
-			ok "files/ is byte-identical to the pinned tag's packaging/files/"
+		# A codeload tarball extracts under its own top-level directory
+		# (<repo>-<tag>/), so packaging/files/ is NOT at $WORK/extracted/.
+		# Locate it instead of assuming the depth.
+		TAR_FILES="$(find "$WORK/extracted" -type d -path '*/packaging/files' -print -quit)"
+		if [ -z "$TAR_FILES" ]; then
+			bad "pinned tarball has no packaging/files/ tree"
+		elif diff -r "$PKG_DIR/files" "$TAR_FILES" >"$WORK/files.diff" 2>&1; then
+			printf '  PASS  files/ is byte-identical to the pinned tag'"'"'s packaging/files/ (%s files)\n' \
+				"$(find "$PKG_DIR/files" -type f | wc -l | tr -d ' ')"
+			PASS=$((PASS + 1))
 		else
-			bad "files/ differs from the pinned tag's packaging/files/"
+			bad "files/ differs from the pinned tag's packaging/files/ (diff, first 40 lines):"
+			sed -n '1,40p' "$WORK/files.diff"
 		fi
 	fi
 fi
