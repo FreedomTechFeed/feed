@@ -219,43 +219,60 @@ jobs:
       - name: Version check inside the built package
         # The CI harness' version check is supplied by net/tollgate-wrt/
         # test-version.sh, because neither binary implements --version (see
-        # that script). Run its assertion here so the SDK job proves the
-        # injected version too, not just that the package compiled.
+        # that script). Do it here as well so the SDK job proves the injected
+        # version, not just that the package compiled.
         #
         # WHERE the binary is: NOT the raw build output. OpenWrt's
-        # CONFIG_AUTOREMOVE hook (include/package.mk, the `compile:` target)
-        # purges every entry at depth 1 of PKG_BUILD_DIR except empty dotfiles,
-        # .pkgdir and version.date - which deletes .go_work/, the
-        # golang-package.mk build dir that holds the raw
-        # tollgate-module-basic-go binary. What survives, and what the package
-        # actually installs, is:
-        #   <PKG_BUILD_DIR>/.pkgdir/tollgate-wrt/usr/bin/{tollgate-wrt,tollgate}
-        # plus the rootfs copy under staging_dir/target-*/root-*/usr/bin/.
-        # Assert on those - the packaged paths - never on build_dir alone.
+        # CONFIG_AUTOREMOVE hook (include/package.mk:328) purges every entry at
+        # depth 1 of PKG_BUILD_DIR except empty dotfiles, .pkgdir and
+        # version.date - which deletes .go_work/, the golang-package.mk dir
+        # holding the raw tollgate-module-basic-go binary. What survives is the
+        # packaged path <PKG_BUILD_DIR>/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt
+        # (plus the rootfs copy under staging_dir/target-*/root-*/usr/bin/).
+        #
+        # The search is VERSION-SCOPED on purpose: /builder/build_dir and
+        # /builder/staging_dir are cache-restored, so they still contain
+        # tollgate-module-basic-go-<older-version>/ trees; an unversioned
+        # `find -name tollgate-wrt` picks a stale binary and reports a version
+        # mismatch that is not real (observed: mipsel_24kc restored a 0.5.0
+        # tree and matched it before the freshly built 0.6.0-alpha1 one).
         shell: bash
         run: |
           set -e
           cd /builder
+          SRCVER=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$GITHUB_WORKSPACE/$PKG_DIR/Makefile" | head -1)
+          # PKG_VERSION is the package manager's spelling of the same release
+          # (0.6.0-alpha1 -> 0.6.0_alpha1 on apk); the package FILENAME uses it.
+          PKGVER=$(printf '%s' "$SRCVER" | sed 's/^\([0-9.]*\)-\(.*\)$/\1_\2/')
+
+          # (1) the artifact THIS run produced must carry the pinned version.
+          # bin/ is not cache-restored, so this cannot match a stale build.
+          PKG=$(find bin -type f \( -name 'tollgate-wrt*.apk' -o -name 'tollgate-wrt*.ipk' \) | head -1)
+          [ -n "$PKG" ] || { echo "FAIL: no tollgate-wrt package produced under bin/"; exit 1; }
+          echo "produced package: $PKG"
+          case "$PKG" in
+            *"$PKGVER"*|*"$SRCVER"*) ;;
+            *) echo "FAIL: produced package name does not carry $PKGVER / $SRCVER"; exit 1 ;;
+          esac
+
+          # (2) the installed service binary must carry the injected version.
           BIN=""
           for pat in \
-            '*/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt' \
-            '*/root-*/usr/bin/tollgate-wrt' \
-            '*/.go_work/build/bin/tollgate-module-basic-go'; do
+            "*/tollgate-module-basic-go-$SRCVER/src/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt" \
+            "*/tollgate-module-basic-go-$SRCVER*/usr/bin/tollgate-wrt"; do
             BIN=$(find build_dir staging_dir -type f -path "$pat" 2>/dev/null | head -1)
             if [ -n "$BIN" ]; then break; fi
           done
           if [ -z "$BIN" ]; then
-            echo "FAIL: packaged tollgate-wrt binary not found under build_dir/staging_dir"
-            echo "--- binaries with the expected names ---"
-            find build_dir staging_dir -type f \
-              \( -name 'tollgate-wrt' -o -name 'tollgate-module-basic-go' \) 2>/dev/null | head -20
-            echo "--- anything under a .pkgdir ---"
-            find build_dir -type f -path '*/.pkgdir/*' 2>/dev/null | head -20
+            echo "FAIL: no packaged tollgate-wrt binary for $SRCVER under build_dir/staging_dir"
+            echo "--- tollgate build trees present (cached; older versions are expected) ---"
+            find build_dir -maxdepth 3 -type d -name 'tollgate-module-basic-go-*' 2>/dev/null
+            echo "--- tollgate-wrt binaries present ---"
+            find build_dir staging_dir -type f -name 'tollgate-wrt' 2>/dev/null | head -20
             echo "--- produced packages ---"
             find bin -type f \( -name 'tollgate-wrt*.apk' -o -name 'tollgate-wrt*.ipk' \) -print
             exit 1
           fi
-          SRCVER=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$GITHUB_WORKSPACE/$PKG_DIR/Makefile" | head -1)
           echo "expecting v$SRCVER in $BIN"
           strings "$BIN" | grep -F -- "v$SRCVER"
           CLI="$(dirname "$BIN")/tollgate"
