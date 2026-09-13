@@ -6,143 +6,166 @@ Turn this repo into a clean OpenWrt **`src-git` feed** that builds the
 `tollgate-wrt` package from upstream source via `golang-package.mk`, so that:
 
 1. It is usable **today** by firmware builders (`feeds.conf` → this repo).
-2. It lifts cleanly into a future PR against [`openwrt/packages`](https://github.com/openwrt/packages),
-   achieving the upstream merge that PR [#125](https://github.com/OpenTollGate/tollgate-module-basic-go/pull/125)
-   was pursuing.
+2. The `net/tollgate-wrt/` directory stays in the shape a future
+   `openwrt/packages` submission would take — one directory, one substituted
+   include line, no restructuring.
+
+(Opening that upstream PR is currently an explicit operator **no**; the shape is
+maintained so the option stays open, not because a PR is planned.)
 
 ## Why this approach (lessons from PR #125)
 
 PR #125 tried to restructure upstream's Go source from `src/` → repo root.
 That touched ~120 files, conflicted with 14 subsequent merges to `main`, and
-was un-reviewable. c03rad0r's June-8 rescue proved the right idea:
-**`golang-package.mk` accepts `GO_PKG` pointing at a subdirectory** — no
-upstream restructure needed.
+was un-reviewable. `golang-package.mk` accepts `GO_PKG` pointing at a
+subdirectory — the module root simply has to be `PKG_BUILD_DIR`, because that
+is where the framework looks for `go.mod` (`lang/golang/golang-build.sh`). So
+no upstream restructure is needed, and by keeping the feed glue in this
+separate repo the eventual upstream addition is small and reviewable.
 
-By putting the feed glue in **this separate repo**:
+## Version identity (the part that silently breaks packages)
 
-- The upstream repo (`tollgate-module-basic-go`) stays **100% untouched** →
-  zero rebase collisions forever.
-- The eventual `openwrt/packages` PR is a small, reviewable addition of
-  `net/tollgate-wrt/{Makefile,files}` — no source shuffle.
+Two spellings of one release, normalised per package manager:
+
+| | value | rule |
+|---|---|---|
+| `PKG_SOURCE_VERSION` | `0.6.0-alpha1` | upstream tag body (`v0.6.0-alpha1`) |
+| `PKG_VERSION` (apk) | `0.6.0_alpha1` | apk allows `-` only as `-r<digits>` |
+| `PKG_VERSION` (opkg) | `0.6.0~alpha1` | opkg ranks `_alpha1` above the bare release |
+| `PKG_RELEASE` | `1` | owns the revision; never write `-rN` in `PKG_VERSION` |
+
+`scripts/check-version-strings.sh` is the offline gate for all of it (plus
+metadata, SPDX-vs-`PKG_LICENSE`, procd init, and install steps referencing
+missing files). `scripts/sync-from-upstream.sh <tag>` rewrites the pins for a
+new release.
+
+The version is injected into the service binary with the same ldflags symbol
+upstream's CI uses. Neither binary supports `--version` (see README), so
+`test-version.sh` supplies the CI harness' version check.
 
 ## Design
 
 - **One package, two binaries.** A single `Package/tollgate-wrt` installs both
-  `/usr/bin/tollgate-wrt` (the service) and `/usr/bin/tollgate` (the CLI). They
-  are one functional unit, so there is no dependency-direction problem.
-- **Two Go modules, one Makefile.** The service lives in the upstream module
-  `github.com/OpenTollGate/tollgate-module-basic-go` (go.mod at `src/`); the CLI
-  is a self-contained separate module at `src/cmd/tollgate-cli/`. We override
-  `Build/Compile` to: (1) run the default `golang-package.mk` build for the
-  service, then (2) a manual `go build` of the CLI from its own module dir,
-  reusing the framework's exported cross-compile/toolchain env.
-- **Source fetched, not vendored.** `PKG_SOURCE_URL` downloads the upstream
-  `v0.5.0` tarball; `PKG_HASH` pins it. `PKG_BUILD_DIR` points at the tarball's
-  `src/` so `golang-package.mk` operates on the module root.
-- **Runtime `files/` ARE vendored** here (init.d, uci-defaults, captive-portal
-  site, hotplug, keep.d) — copied from upstream `packaging/files/` via
-  `scripts/sync-from-upstream.sh` and re-synced per release.
-- **Upstream policy compliance** (enforced by CI): no `REPLACES`, no `luci`
-  dependency, `GPL-3.0-only`, real `PKG_HASH`.
+  `/usr/bin/tollgate-wrt` (the service) and `/usr/bin/tollgate` (the CLI).
+- **Two Go modules, one Makefile.** The service is the module at
+  `src/`; the CLI is a self-contained module at `src/cmd/tollgate-cli/` that no
+  `GO_PKG_BUILD_PKG` can reach (`go install` cannot cross a module boundary).
+  `Build/Compile` builds the service through the framework helper, then the CLI
+  from its own module dir with the framework's exported cross-compile env.
+- **Source fetched, never vendored.** `PKG_SOURCE_URL` is the codeload tarball
+  for a release tag; `PKG_HASH` pins its sha256. No `latest`, no branch heads.
+- **`PKG_BUILD_DIR` = the tarball's `src/`** so `golang-package.mk` operates on
+  the module root and `src/go.mod`'s `replace ./sibling` directives resolve.
+- **Runtime `files/` ARE vendored**, verbatim from the pinned tag's
+  `packaging/files/` (60 files), re-synced by `scripts/sync-from-upstream.sh`.
+  The compiled captive-portal SPA bundles live in `portal-assets/` instead —
+  they come from a separate npm build upstream injects as a CI artifact (see
+  `portal-assets/README.md`).
+- **Upstream policy compliance:** no `REPLACES`, no `luci` dependency,
+  `GPL-3.0-only` matching upstream's LICENSE, real `PKG_HASH`.
 
 ### Layout
 
 ```
 feed/
 ├── net/tollgate-wrt/
-│   ├── Makefile          # single package; builds service + CLI
-│   └── files/            # vendored from upstream packaging/files/
+│   ├── Makefile                 # single package; builds service + CLI
+│   ├── test-version.sh          # CI version check override
+│   ├── files/                   # verbatim tag packaging/files/ (init.d, uci-defaults, …)
+│   └── portal-assets/assets/    # compiled captive-portal SPA bundles
 ├── scripts/
-│   └── sync-from-upstream.sh   # re-vendor files/ + recompute PKG_HASH for a tag
+│   ├── sync-from-upstream.sh    # re-pin version/hash + re-vendor files/
+│   └── check-version-strings.sh # offline pre-build gate
 ├── .github/workflows/
-│   └── validate-feed.yml # lint + PKG_HASH verify + OpenWrt SDK build
+│   └── validate-feed.yml        # lint + hash verify (+ SDK build)
 ├── README.md
 ├── AGENTS.md
-└── PLAN.md               # this file
+└── PLAN.md                      # this file
 ```
 
 ### golang-package.mk include path
 
 - **Standalone feed (this repo):**
   `include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk`
-- **When lifted into `openwrt/packages` (future PR):** change that single line to
+- **Inside `openwrt/packages` (or a fork of it):**
   `include ../../lang/golang/golang-package.mk`
 
-This one-liner swap is the only feed-vs-upstream difference.
+This one line is the only difference between the two homes; it is the only
+edit needed when the directory is lifted.
 
 ### Key Makefile fields
 
 ```makefile
 PKG_NAME:=tollgate-wrt
-PKG_VERSION:=0.5.0
+PKG_SOURCE_VERSION:=0.6.0-alpha1
+PKG_SOURCE_COMMIT:=414650310b829ae6715fcffbc473e62a25655ed6
+ifeq ($(CONFIG_USE_APK),y)
+PKG_VERSION:=0.6.0_alpha1
+else
+PKG_VERSION:=0.6.0~alpha1
+endif
 PKG_RELEASE:=1
-PKG_SOURCE:=tollgate-module-basic-go-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=<sha256>
-PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)/src
+PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_SOURCE_VERSION)?
+PKG_HASH:=c0ca1b37cbccde8e46de8e42287185d322c648bb10ad317b3e496a136a0e35f7
+PKG_MAINTAINER:=TollGate <tollgate@tollgate.me>
+PKG_LICENSE:=GPL-3.0-only
+PKG_LICENSE_FILES:=LICENSE
+PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)/src
 GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 GO_PKG_BUILD_PKG:=$(GO_PKG)
-DEPENDS:=+nodogsplash +jq $(GO_ARCH_DEPENDS)
 ```
 
-## Highest-risk item (gated by CI)
+## Highest-risk item (proven, not assumed)
 
 PR #125 never finished proving that `golang-package.mk` works when the module's
-`go.mod` lives in a tarball **subdirectory** (`src/`) — plus our extra nested
-CLI-module build. The `validate-feed.yml` **OpenWrt SDK build job** is the gate
-that proves both compile before any upstream submission.
+`go.mod` lives in a tarball **subdirectory** (`src/`) — plus the extra nested
+CLI-module build. Both were proven with a real SDK compile of this package on
+`mediatek-filogic` (`aarch64_cortex-a53`): see the run evidence recorded on the
+kanban card (raw `feeds update/install`, `make .../check`, `make .../compile`,
+the produced package filename, and the binary's version).
 
-## Testing pipeline (CI)
+## Testing pipeline
 
-`.github/workflows/validate-feed.yml` *is* the testing pipeline. Three jobs:
+`scripts/check-version-strings.sh` is the fast, deterministic, offline gate
+(23 checks) and runs on every push. `.github/workflows/validate-feed.yml` adds
+lint + `PKG_HASH` verification against the live tarball. The authoritative
+proof is a real SDK compile:
 
-| Job | Purpose | When it runs |
-|---|---|---|
-| `validate` | Makefile field lint (no `REPLACES`), `PKG_HASH` vs the live tarball, every referenced `files/` path exists | every push/PR |
-| `go-smoke` | plain `go build` of both Go modules for amd64/arm64/mipsle | every push/PR |
-| `build-sdk` | authoritative OpenWrt SDK compile via `golang-package.mk` | main pushes, PRs, tags, weekly, manual dispatch |
+```sh
+# inside a pinned openwrt/sdk:<target>-v25.12.5 container
+./scripts/feeds update packages tollgate
+./scripts/feeds install -a -p tollgate
+make defconfig
+make package/feeds/tollgate/tollgate-wrt/download V=s
+make package/feeds/tollgate/tollgate-wrt/check V=s
+make package/feeds/tollgate/tollgate-wrt/compile V=s
+```
 
-`build-sdk` builds a **3-target matrix** so the real TollGate hardware arches
-are proven, not just x86-64:
+Notes learned the hard way:
 
-- `x86-64` — host-runnable (amd64)
-- `mediatek-filogic` — GL-MT6000 (`aarch64_cortex-a53`)
-- `ramips-mt7621` — GL-MT3000 (`mipsel_24kc`)
-
-Each SDK job **uploads** the built `.ipk`/`.apk` as a workflow artifact
-(`tollgate-wrt-<target>`) so it can be downloaded for on-router testing
-without a local rebuild.
-
-Binary runtime smoke (qemu) is intentionally **not** included, to keep the
-pipeline simple. The maintainer-facing proof is the SDK compile itself; runtime
-validation happens on real hardware with the uploaded artifacts.
-
-Cost: each `build-sdk` job is slow (~30–60 min, it bootstraps the Go toolchain).
-The 3-target matrix runs on main pushes / PRs / tags, so expect ~3× that in CI
-minutes on those events (the jobs run in parallel).
-
-SDK image contract (gotcha): since OpenWrt 24.10 the snapshot SDK images
-(`-master`/`-SNAPSHOT`) ship an **empty `/builder` plus a `setup.sh`** — the
-job must run `./setup.sh` (download + extract the SDK) before feeds/make work.
-The job also runs `feeds install -a` (not just `tollgate-wrt`) so the
-`golang/host` toolchain and `nodogsplash`/`jq` from the `packages` feed are
-available.
+- Pin **release** SDK images (`<target>-v25.12.5`), never `:latest`/`-master`;
+  moving tags rot silently.
+- Do not bind-mount `staging_dir`/`build_dir` over the image's own: the image's
+  prebuilt staging tree carries a host-gcc symlink that only `make defconfig`
+  repairs in-container.
+- `make package/.../check` is a light gate (download + hash); `compile` is what
+  actually exercises `golang-package.mk`.
+- `nodogsplash` is not in the 25.12 packages feed (only `openwrt/packages@master`
+  has it), so the `DEPENDS` line cannot be satisfied by a stock 25.12 build —
+  see README. Compilation is unaffected.
 
 ## Checklist
 
 - [x] Write `PLAN.md` (this document)
-- [x] Wipe unneeded current repo contents
-      (`FEED-MANIFEST.conf`, `docs/`, `scripts/generate-*-index.sh`, old workflow)
-- [x] Vendor `files/` from upstream `v0.5.0` and pin `PKG_HASH`
-- [x] Write `net/tollgate-wrt/Makefile` (single package, both binaries)
-- [x] Write `scripts/sync-from-upstream.sh` (idempotent, `shellcheck` clean)
-- [x] Write `.github/workflows/validate-feed.yml` (validate + go-smoke + build-sdk)
-- [x] Enhance `build-sdk`: run on main pushes, 3-arch matrix (x86-64 +
-      mediatek-filogic + ramips-mt7621), upload package artifacts
-      (smoke test intentionally omitted to keep it simple)
-- [x] Rewrite `README.md` and `AGENTS.md`
-- [x] Verify: Makefile lint, hash check, referenced-paths check, `shellcheck`
-- [ ] _(future)_ First green `build-sdk` run across all 3 arches
-- [x] **Namespaced SDK cache keys** (fixes ramips gettext host failure — restored stale `-master` cache into pinned v25.12.5; root-caused 2026-09-08)
-- [ ] _(future)_ Lift `net/tollgate-wrt/` into a PR to `openwrt/packages`
-      (swap the `golang-package.mk` include path)
+- [x] Wipe unneeded repo contents (old manifest/index scripts/workflow)
+- [x] Vendor `files/` verbatim from the pinned tag and pin `PKG_HASH`
+- [x] Version identity: per-manager spellings, proven with the real tools
+- [x] `Build/Prepare` handles the `src/` module root (no upstream restructure)
+- [x] `test-version.sh` (neither binary implements `--version`)
+- [x] `scripts/check-version-strings.sh` offline gate + RED/GREEN demo
+- [x] `scripts/sync-from-upstream.sh` re-pins version/hash and re-vendors files/
+- [x] Prove the build on a pinned 25.12 SDK (`mediatek-filogic`) and record raw output
+- [x] Rewrite `README.md` (honest supported matrix) and this plan
+- [ ] Run the same compile on the remaining matrix targets (x86-64, ramips-mt7621)
+- [ ] _(future)_ exercise the built package on router hardware
+- [ ] _(future, operator-gated)_ lift `net/tollgate-wrt/` into `openwrt/packages`
