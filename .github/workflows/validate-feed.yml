@@ -10,71 +10,31 @@ on:
 env:
   PKG_DIR: net/tollgate-wrt
   UPSTREAM: OpenTollGate/tollgate-module-basic-go
+  SDK_PIN: v25.12.5
 
 jobs:
   validate:
-    name: Lint Makefile, verify hash & files
+    name: Version identity, hash & vendored files
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint Makefile fields
+      - name: Offline gate (version strings, metadata, install paths)
+        run: sh scripts/check-version-strings.sh
+
+      - name: Upstream policy
         run: |
           set -e
           M="$PKG_DIR/Makefile"
-          [ -f "$M" ] || { echo "FAIL: $M not found"; exit 1; }
-          for field in PKG_NAME PKG_VERSION PKG_RELEASE PKG_SOURCE_URL PKG_HASH \
-                       PKG_LICENSE GO_PKG GO_PKG_BUILD_PKG; do
-            grep -q "^${field}:" "$M" || { echo "FAIL: missing $field"; exit 1; }
-          done
+          # openwrt/packages does not accept REPLACES in new packages.
+          if grep -q 'REPLACES' "$M"; then
+            echo "FAIL: REPLACES not allowed upstream"; exit 1
+          fi
           grep -q 'BuildPackage' "$M" || { echo "FAIL: missing BuildPackage eval"; exit 1; }
+          echo "policy checks passed"
 
-          # Upstream policy: REPLACES is not allowed in openwrt/packages.
-          grep -q 'REPLACES' "$M" && { echo "FAIL: REPLACES not allowed upstream"; exit 1; }
-
-          echo "Makefile lint passed."
-
-      - name: Verify PKG_HASH against the source tarball
-        run: |
-          set -e
-          M="$PKG_DIR/Makefile"
-          EXPECTED=$(grep '^PKG_HASH:' "$M" | sed 's/^PKG_HASH:=//')
-          PKG_VERSION=$(grep '^PKG_VERSION:' "$M" | sed 's/^PKG_VERSION:=//')
-          [ "$EXPECTED" != "skip" ] || { echo "FAIL: PKG_HASH is 'skip'"; exit 1; }
-
-          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
-          echo "Fetching $URL"
-          ACTUAL=$(curl -fsSL "$URL" | sha256sum | awk '{print $1}')
-          echo "expected=$EXPECTED"
-          echo "actual  =$ACTUAL"
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "FAIL: PKG_HASH mismatch"; exit 1; }
-
-      - name: Verify every ./files/ path referenced by the Makefile exists
-        run: |
-          set -e
-          M="$PKG_DIR/Makefile"
-          # Pull out ./files/... tokens, strip a trailing glob '*' or cp '/.' suffix.
-          grep -oP '\./files/\S+' "$M" \
-            | sed -e 's/\*$//' -e 's#/\.$##' \
-            | sort -u \
-            | while IFS= read -r ref; do
-                [ -e "$PKG_DIR/$ref" ] || { echo "FAIL: Makefile references $ref but $PKG_DIR/$ref is missing"; exit 1; }
-              done
-          echo "All referenced files/ paths exist."
-
-      - name: Verify the critical runtime files are vendored
-        run: |
-          set -e
-          for f in \
-            files/etc/init.d/tollgate-wrt \
-            files/etc/config/firewall-tollgate \
-            files/etc/uci-defaults/99-tollgate-setup \
-            files/etc/uci-defaults/90-tollgate-captive-portal-symlink \
-            files/etc/hotplug.d/iface/95-tollgate-restart \
-            files/lib/upgrade/keep.d/tollgate; do
-            [ -f "$PKG_DIR/$f" ] || { echo "FAIL: missing $f"; exit 1; }
-          done
-          echo "Critical files present."
+      - name: Verify PKG_HASH and files/ against the pinned release tarball
+        run: sh scripts/check-version-strings.sh --hash
 
   go-smoke:
     name: Go cross-compile (no SDK)
@@ -83,22 +43,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { goarch: amd64,                      goarm: "",  gomips: "" }
-          - { goarch: arm64,                      goarm: "",  gomips: "" }
-          - { goarch: mipsle,                     goarm: "",  gomips: softfloat }
+          - { goarch: amd64,  goarm: "",  gomips: "" }
+          - { goarch: arm64,  goarm: "",  gomips: "" }
+          - { goarch: mipsle, goarm: "",  gomips: softfloat }
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          # The pinned module declares `go 1.25.0`; anything older refuses to
+          # build it. Keep this >= the go directive in src/go.mod.
+          go-version: "1.25"
 
       - name: Download pinned upstream source
         run: |
           set -e
-          PKG_VERSION=$(grep '^PKG_VERSION:' "$PKG_DIR/Makefile" | sed 's/^PKG_VERSION:=//')
-          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${PKG_VERSION}"
+          # PKG_SOURCE_VERSION is the tag body. PKG_VERSION is the package
+          # manager's spelling (0.6.0_alpha1 / 0.6.0~alpha1) and is NOT the tag.
+          SRCVER=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$PKG_DIR/Makefile" | head -1)
+          URL="https://codeload.github.com/${UPSTREAM}/tar.gz/v${SRCVER}"
+          echo "Fetching $URL"
           curl -fsSL "$URL" | tar -xz
-          echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-$PKG_VERSION/src" >> "$GITHUB_ENV"
+          echo "TOLLGATE_SRC=$PWD/tollgate-module-basic-go-${SRCVER}/src" >> "$GITHUB_ENV"
 
       - name: Build service + CLI for ${{ matrix.goarch }}
         env:
@@ -186,17 +152,24 @@ jobs:
           cp feeds.conf.default feeds.conf
           # src-link so the SDK builds straight from this checkout.
           echo "src-link tollgate $GITHUB_WORKSPACE" >> feeds.conf
-          ./scripts/feeds update -a
+          ./scripts/feeds update packages tollgate
           # Targeted install (not -a): -a pulls every feed package and exposes
           # current openwrt-master recursive-dependency breakage (luci,
           # strongswan, ...). golang1.26 is required because the `golang`
           # package is a dummy whose HOST_BUILD_DEPENDS is golang1.26/host
           # (the real toolchain). Bump 1.26 if GO_DEFAULT_VERSION changes.
-          ./scripts/feeds install tollgate-wrt golang golang1.26 nodogsplash jq
+          #
+          # nodogsplash is deliberately NOT installed: it does not exist in the
+          # 25.12 packages feed (only openwrt/packages@master carries
+          # net/nodogsplash), so asking feeds for it fails the job. The
+          # dependency is a runtime one and does not affect compilation.
+          ./scripts/feeds install -a -p tollgate
+          ./scripts/feeds install golang golang1.26 jq
 
       - name: Configure
         shell: bash
         run: |
+          set -e
           cd /builder
           # The SDK ships a bloated config (CONFIG_ALL/ALL_KMODS) that makes
           # builds compile every kmod and time out. Re-seed minimal: keep only
@@ -206,17 +179,29 @@ jobs:
           {
             grep -E '^CONFIG_TARGET' .config 2>/dev/null
             printf '# CONFIG_ALL is not set\n# CONFIG_ALL_KMODS is not set\n# CONFIG_ALL_NONSHARED is not set\n'
-            printf 'CONFIG_PACKAGE_tollgate-wrt=y\nCONFIG_PACKAGE_nodogsplash=y\nCONFIG_PACKAGE_jq=y\n'
+            printf 'CONFIG_PACKAGE_tollgate-wrt=y\nCONFIG_PACKAGE_jq=y\n'
           } > .config.min
           mv .config.min .config
           make defconfig
           echo "enabled packages (=y): $(grep -c '=y' .config)"
 
+      - name: Download (verifies PKG_HASH)
+        shell: bash
+        run: |
+          cd /builder
+          make -j"$(nproc)" package/feeds/tollgate/tollgate-wrt/download V=s
+
+      - name: Check
+        shell: bash
+        run: |
+          cd /builder
+          make -j"$(nproc)" package/feeds/tollgate/tollgate-wrt/check V=s
+
       - name: Build tollgate-wrt
         shell: bash
         run: |
           cd /builder
-          make -j"$(nproc)" package/tollgate-wrt/compile V=s
+          make -j"$(nproc)" package/feeds/tollgate/tollgate-wrt/compile V=s
 
       - name: Collect & show produced package(s)
         shell: bash
@@ -230,6 +215,70 @@ jobs:
             -exec cp {} "$GITHUB_WORKSPACE/artifacts/" \;
           echo "=== staged for upload ==="
           ls -lh "$GITHUB_WORKSPACE/artifacts/"
+
+      - name: Version check inside the built package
+        # The CI harness' version check is supplied by net/tollgate-wrt/
+        # test-version.sh, because neither binary implements --version (see
+        # that script). Do it here as well so the SDK job proves the injected
+        # version, not just that the package compiled.
+        #
+        # WHERE the binary is: NOT the raw build output. OpenWrt's
+        # CONFIG_AUTOREMOVE hook (include/package.mk:328) purges every entry at
+        # depth 1 of PKG_BUILD_DIR except empty dotfiles, .pkgdir and
+        # version.date - which deletes .go_work/, the golang-package.mk dir
+        # holding the raw tollgate-module-basic-go binary. What survives is the
+        # packaged path <PKG_BUILD_DIR>/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt
+        # (plus the rootfs copy under staging_dir/target-*/root-*/usr/bin/).
+        #
+        # The search is VERSION-SCOPED on purpose: /builder/build_dir and
+        # /builder/staging_dir are cache-restored, so they still contain
+        # tollgate-module-basic-go-<older-version>/ trees; an unversioned
+        # `find -name tollgate-wrt` picks a stale binary and reports a version
+        # mismatch that is not real (observed: mipsel_24kc restored a 0.5.0
+        # tree and matched it before the freshly built 0.6.0-alpha1 one).
+        shell: bash
+        run: |
+          set -e
+          cd /builder
+          SRCVER=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$GITHUB_WORKSPACE/$PKG_DIR/Makefile" | head -1)
+          # PKG_VERSION is the package manager's spelling of the same release
+          # (0.6.0-alpha1 -> 0.6.0_alpha1 on apk); the package FILENAME uses it.
+          PKGVER=$(printf '%s' "$SRCVER" | sed 's/^\([0-9.]*\)-\(.*\)$/\1_\2/')
+
+          # (1) the artifact THIS run produced must carry the pinned version.
+          # bin/ is not cache-restored, so this cannot match a stale build.
+          PKG=$(find bin -type f \( -name 'tollgate-wrt*.apk' -o -name 'tollgate-wrt*.ipk' \) | head -1)
+          [ -n "$PKG" ] || { echo "FAIL: no tollgate-wrt package produced under bin/"; exit 1; }
+          echo "produced package: $PKG"
+          case "$PKG" in
+            *"$PKGVER"*|*"$SRCVER"*) ;;
+            *) echo "FAIL: produced package name does not carry $PKGVER / $SRCVER"; exit 1 ;;
+          esac
+
+          # (2) the installed service binary must carry the injected version.
+          BIN=""
+          for pat in \
+            "*/tollgate-module-basic-go-$SRCVER/src/.pkgdir/tollgate-wrt/usr/bin/tollgate-wrt" \
+            "*/tollgate-module-basic-go-$SRCVER*/usr/bin/tollgate-wrt"; do
+            BIN=$(find build_dir staging_dir -type f -path "$pat" 2>/dev/null | head -1)
+            if [ -n "$BIN" ]; then break; fi
+          done
+          if [ -z "$BIN" ]; then
+            echo "FAIL: no packaged tollgate-wrt binary for $SRCVER under build_dir/staging_dir"
+            echo "--- tollgate build trees present (cached; older versions are expected) ---"
+            find build_dir -maxdepth 3 -type d -name 'tollgate-module-basic-go-*' 2>/dev/null
+            echo "--- tollgate-wrt binaries present ---"
+            find build_dir staging_dir -type f -name 'tollgate-wrt' 2>/dev/null | head -20
+            echo "--- produced packages ---"
+            find bin -type f \( -name 'tollgate-wrt*.apk' -o -name 'tollgate-wrt*.ipk' \) -print
+            exit 1
+          fi
+          echo "expecting v$SRCVER in $BIN"
+          strings "$BIN" | grep -F -- "v$SRCVER"
+          CLI="$(dirname "$BIN")/tollgate"
+          if [ ! -f "$CLI" ]; then CLI="$(dirname "$BIN")/tollgate-cli"; fi
+          [ -f "$CLI" ] || { echo "FAIL: CLI binary missing next to $BIN"; exit 1; }
+          echo "CLI binary present: $CLI"
 
       - name: Upload package artifact(s)
         uses: actions/upload-artifact@v4
