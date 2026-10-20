@@ -1,4 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
+# DEPRECATED MIRROR TARGET — do not hand-edit.
+# The canonical recipe is FreedomTechFeed/packages:net/tollgate-wrt (fences:
+# vendor lock, tarball parity, build-contract gate). This copy is mirrored
+# by scripts/sync-from-canonical.sh (net/tollgate-wrt/.canonical-source
+# records the ref); changes belong upstream of the mirror.
+#
 #
 # tollgate-wrt — Cashu-powered WiFi payment gateway for OpenWrt.
 #
