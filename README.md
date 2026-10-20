@@ -1,3 +1,16 @@
+> **⚠️ DEPRECATED — this repo is now a wrapper.** The canonical
+> `tollgate-wrt` recipe lives in
+> [`FreedomTechFeed/packages`](https://github.com/FreedomTechFeed/packages)
+> (`net/tollgate-wrt/`), where the fences are: vendor-locked portal
+> bundling (build-in-CI), both-directions tarball parity, the upstream
+> build-contract fence, and per-arch publish lanes. This repo is kept as a
+> standalone `src-git` entry point for existing `feeds.conf` lines:
+> `scripts/sync-from-canonical.sh` mirrors the canonical recipe here
+> (one include-line swap), and `net/tollgate-wrt/.canonical-source`
+> records what it mirrors. Do not hand-edit `net/tollgate-wrt/` — change
+> it upstream of the mirror, then re-sync. New consumers should point at
+> the canonical feed directly.
+
 # TollGate OpenWrt Feed
 
 An OpenWrt package feed that builds **`tollgate-wrt`** from the upstream
