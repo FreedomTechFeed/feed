@@ -122,11 +122,22 @@ The 3-target matrix runs on main pushes / PRs / tags, so expect ~3× that in CI
 minutes on those events (the jobs run in parallel).
 
 SDK image contract (gotcha): since OpenWrt 24.10 the snapshot SDK images
-(`-master`/`-SNAPSHOT`) ship an **empty `/builder` plus a `setup.sh`** — the
-job must run `./setup.sh` (download + extract the SDK) before feeds/make work.
-The job also runs `feeds install -a` (not just `tollgate-wrt`) so the
-`golang/host` toolchain and `nodogsplash`/`jq` from the `packages` feed are
-available.
+(`-master`/`-SNAPSHOT`) ship an **empty `/builder` plus a `setup.sh`** — with
+those the job must run `./setup.sh` (download + extract the SDK) before
+feeds/make work. The job therefore pins **release images by tag *and* digest**
+(`openwrt/sdk:<target>-v25.12.5@sha256:…`, pinned 2026-11-03): release images
+are pre-extracted and frozen at the 25.12.x toolchain, which sidesteps both the
+`-master` glibc >= 2.42 / iconv breakage (gettext-full host build) and the
+snapshot-tarball mirror sha256 skew. `./setup.sh` is still the fallback for an
+image without `./scripts`.
+
+The job installs a **targeted** feed set, not `-a`: `-a` pulls every feed
+package and exposes current openwrt-master recursive-dependency breakage.
+`golang<X>` on that line is matrix-driven (`golang` is a dummy whose
+`HOST_BUILD_DEPENDS` is `golang<X>/host`) and follows the pinned branch:
+`25.12` → `1.26`, `24.10` → `1.23` (`GO_DEFAULT_VERSION` in
+`lang/golang/golang-values.mk`). `nodogsplash`/`jq` come from the `packages`
+feed.
 
 ## Checklist
 
@@ -144,5 +155,8 @@ available.
 - [x] Verify: Makefile lint, hash check, referenced-paths check, `shellcheck`
 - [ ] _(future)_ First green `build-sdk` run across all 3 arches
 - [x] **Namespaced SDK cache keys** (fixes ramips gettext host failure — restored stale `-master` cache into pinned v25.12.5; root-caused 2026-09-08)
+- [x] **Digest-pinned SDK images + per-branch golang** (pinned 2026-11-03:
+      `openwrt/sdk:<target>-v25.12.5@sha256:…` in the matrix; `golang<X>` on the
+      `feeds install` line is matrix-driven; guarded by `tests/test_workflow_pins.py`)
 - [ ] _(future)_ Lift `net/tollgate-wrt/` into a PR to `openwrt/packages`
       (swap the `golang-package.mk` include path)
