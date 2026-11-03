@@ -79,6 +79,15 @@ expected) and commit.
 3. **build-sdk** — the authoritative proof: a real OpenWrt SDK compile of the
    package via `golang-package.mk`, including the nested CLI-module build.
 
+The SDK job runs in a **digest-pinned release image**
+(`openwrt/sdk:<target>-v25.12.5@sha256:…`, pinned 2026-11-03), never a moving
+`*-master`/`*-SNAPSHOT` tag — those were rebuilt around 2026-08-14 with
+glibc >= 2.42 (breaks the `gettext-full` host build) and their snapshot SDK
+tarballs hit mirror sha256 skew. Each matrix row carries the tag, its digest,
+the OpenWrt branch and that branch's `golang` package version
+(`25.12` → `golang1.26`), so the `feeds install` line tracks the pinned branch.
+`tests/test_workflow_pins.py` enforces all of that (`python3 -m pytest tests/`).
+
 The SDK job is the gate before submitting upstream. See [`PLAN.md`](PLAN.md)
 for the full design and the highest-risk item.
 

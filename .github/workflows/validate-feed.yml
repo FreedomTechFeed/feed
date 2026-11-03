@@ -131,24 +131,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # SDK image pin table — release tag + manifest digest, pinned 2026-11-03.
+        # Never use the moving `openwrt/sdk:*-master` / `*-SNAPSHOT` tags:
+        # x86-64 -master was rebuilt ~2026-08-14 with glibc >= 2.42 / iconv
+        # removal (breaks gettext-full host build), and the snapshot SDK
+        # tarballs hit mirror sha256 skew during setup.sh. Release images are
+        # pre-extracted and frozen at the 25.12.x toolchain. Digests verified
+        # live against registry-1.docker.io (manifest v2, single-arch amd64);
+        # `golang` is that branch's GO_DEFAULT_VERSION from
+        # openwrt/packages:openwrt-25.12 lang/golang/golang-values.mk.
         include:
-          - { target: x86-64,          desc: "host-runnable (amd64)" }
-          - { target: mediatek-filogic, desc: "GL-MT6000 (aarch64)" }
-          - { target: ramips-mt7621,    desc: "GL-MT3000 (mipsle)" }
+          - target: x86-64
+            desc: "host-runnable (amd64)"
+            tag: x86-64-v25.12.5
+            digest: sha256:e916b7cc555890bdc4725c926e139b888294f0c8f56561b88d8da3a6348616a2
+            branch: "25.12"
+            golang: "1.26"
+          - target: mediatek-filogic
+            desc: "GL-MT6000 (aarch64)"
+            tag: mediatek-filogic-v25.12.5
+            digest: sha256:011c367ac3e63ab3fd345bdb242564fedda033b40e73f883bd550fcf0d27bf9c
+            branch: "25.12"
+            golang: "1.26"
+          - target: ramips-mt7621
+            desc: "GL-MT3000 (mipsle)"
+            tag: ramips-mt7621-v25.12.5
+            digest: sha256:45a090c9883f42b649be77a1610a5bae4aae6c914e7ea4a5396be47707b74701
+            branch: "25.12"
+            golang: "1.26"
     container:
-      image: openwrt/sdk:${{ matrix.target }}-v25.12.5
+      image: openwrt/sdk:${{ matrix.tag }}@${{ matrix.digest }}
       options: --user root
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract the OpenWrt SDK
-        # PINNED release images (openwrt/sdk:*-v25.12.5) are pre-extracted
-        # (./scripts present) so setup.sh is skipped. We pin release tags —
-        # NOT the moving :*-master images (rebuilt ~2026-08-14 with glibc
-        # >=2.42 / iconv removal, breaking gettext-full; and snapshot SDK
-        # tarballs hit mirror sha256 skew). Release images are frozen at the
-        # 25.12.x toolchain (glibc < 2.42) and pre-extracted, fixing both.
-        # See openwrt/docker README.
+        # PINNED release images (openwrt/sdk:*-v25.12.5@sha256:…) are
+        # pre-extracted (./scripts present) so setup.sh is skipped. We pin the
+        # release tag AND its digest — never the moving :*-master/:*-SNAPSHOT
+        # tags (x86-64 -master rebuilt ~2026-08-14 with glibc >=2.42 / iconv
+        # removal, breaking gettext-full; snapshot SDK tarballs hit mirror
+        # sha256 skew). Release images are frozen at the 25.12.x toolchain
+        # (glibc < 2.42) and pre-extracted, fixing both. See openwrt/docker
+        # README.
         shell: bash
         run: cd /builder && { [ -d ./scripts ] || ./setup.sh; }
 
@@ -189,10 +214,12 @@ jobs:
           ./scripts/feeds update -a
           # Targeted install (not -a): -a pulls every feed package and exposes
           # current openwrt-master recursive-dependency breakage (luci,
-          # strongswan, ...). golang1.26 is required because the `golang`
-          # package is a dummy whose HOST_BUILD_DEPENDS is golang1.26/host
-          # (the real toolchain). Bump 1.26 if GO_DEFAULT_VERSION changes.
-          ./scripts/feeds install tollgate-wrt golang golang1.26 nodogsplash jq
+          # strongswan, ...). golang${{ matrix.golang }} is required because the
+          # `golang` package is a dummy whose HOST_BUILD_DEPENDS is
+          # golang${{ matrix.golang }}/host (the real toolchain). The version is
+          # driven by the matrix so it always matches the pinned SDK image's
+          # OpenWrt branch (25.12 → GO_DEFAULT_VERSION 1.26; 24.10 → 1.23).
+          ./scripts/feeds install tollgate-wrt golang golang${{ matrix.golang }} nodogsplash jq
 
       - name: Configure
         shell: bash
